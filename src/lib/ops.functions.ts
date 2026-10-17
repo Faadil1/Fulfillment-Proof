@@ -479,3 +479,17 @@ export const providerStatus = createServerFn({ method: "POST" })
     ]);
     return JSON.parse(JSON.stringify({ createos, ai, stripe, stripeProjects })) as { createos: { level: string; detail: Record<string, string> }; ai: { level: string }; stripe: { level: string; detail: Record<string, string> }; stripeProjects: { level: string; detail: Record<string, string> } };
   });
+
+/** Operator refusal without running an agent. Atomic, role-checked and guarded in SQL (refuse_incident). */
+export const refuseIncident = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d) => z.object({ incidentId: z.string().uuid(), reason: z.string().trim().min(10).max(500), keepDestinationId: z.string().uuid().optional() }).parse(d))
+  .handler(async ({ data, context }) => {
+    const { data: res, error } = await context.supabase.rpc("refuse_incident", { _incident: data.incidentId, _reason: data.reason, ...(data.keepDestinationId ? { _keep_destination: data.keepDestinationId } : {}) });
+    if (error) {
+      const msg = String(error.message ?? "");
+      if (/^(Blocked|Forbidden)|not found/i.test(msg)) throw new Error(msg);
+      throw new Error("Refusal could not be stored; nothing was changed");
+    }
+    return res as { incident_id: string; status: string; kept_destination_record_id: string | null };
+  });

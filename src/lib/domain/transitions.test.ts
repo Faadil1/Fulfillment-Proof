@@ -57,3 +57,44 @@ describe("re-verify and audit naming", () => {
   }
   it("VERIFIED audited as write.verified", () => expect(verificationAuditAction("VERIFIED")).toBe("write.verified"));
 });
+
+import { refusalEligibility, diffPayloads } from "./transitions";
+describe("operator refusal", () => {
+  const clean = { hasDestinationEffect: false, hasLiveApproval: false };
+  const why = "Duplicate order with wrong amount";
+  it("allows OPEN and FAILED with a valid reason", () => {
+    expect(refusalEligibility("OPEN", why, clean).ok).toBe(true);
+    expect(refusalEligibility("FAILED", why, clean).ok).toBe(true);
+  });
+  for (const s of ["DIAGNOSING", "AWAITING_APPROVAL", "READY_TO_WRITE", "RECONCILE", "VERIFIED", "REFUSED"]) {
+    it(`blocks ${s}`, () => expect(refusalEligibility(s, why, clean).ok).toBe(false));
+  }
+  it("requires 10-500 char reason (whitespace trimmed)", () => {
+    expect(refusalEligibility("OPEN", "   short   ", clean).ok).toBe(false);
+    expect(refusalEligibility("OPEN", "x".repeat(501), clean).ok).toBe(false);
+  });
+  it("blocks when a destination effect may exist", () => expect(refusalEligibility("OPEN", why, { ...clean, hasDestinationEffect: true }).ok).toBe(false));
+  it("blocks when an approval is live", () => expect(refusalEligibility("OPEN", why, { ...clean, hasLiveApproval: true }).ok).toBe(false));
+  it("refused incident can never be repaired or written", async () => {
+    const { canClaimRepair, commitEligibility } = await import("./transitions");
+    expect(canClaimRepair("REFUSED", new Date()).ok).toBe(false);
+    const run = { id: "r", incident_id: "i", org_id: "o", attempt: 1, generation_status: "NOT_NEEDED", execution_status: "NOT_NEEDED", proposed_record: {}, policy: {} };
+    expect(commitEligibility(run, { id: "i", org_id: "o", status: "REFUSED" }, "r").ok).toBe(false);
+  });
+});
+
+describe("conflict comparison", () => {
+  it("reports changed, added and removed fields including nested", () => {
+    const d = diffPayloads({ external_order_id: "o1", amount_cents: 1200, product: { sku: "A" }, note: "x" }, { external_order_id: "o1", amount_cents: 9999, product: { sku: "B" }, coupon: "Z" });
+    expect(d).toEqual([
+      { path: "amount_cents", original: 1200, incoming: 9999, kind: "changed" },
+      { path: "coupon", original: undefined, incoming: "Z", kind: "added" },
+      { path: "note", original: "x", incoming: undefined, kind: "removed" },
+      { path: "product.sku", original: "A", incoming: "B", kind: "changed" },
+    ]);
+  });
+  it("identical payloads produce no diff; type change is detected", () => {
+    expect(diffPayloads({ a: 1 }, { a: 1 })).toEqual([]);
+    expect(diffPayloads({ a: 1 }, { a: "1" })[0]?.kind).toBe("changed");
+  });
+});

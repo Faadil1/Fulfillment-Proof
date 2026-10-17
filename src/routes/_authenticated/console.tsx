@@ -1,4 +1,4 @@
-import { canClaimRepair, blockedReason, statusGuidance } from "@/lib/domain/transitions";
+import { canClaimRepair, blockedReason, statusGuidance, refusalEligibility, diffPayloads } from "@/lib/domain/transitions";
 import { canRotateSecret } from "@/lib/domain/secret";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -8,7 +8,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { Evidence, Status, Empty } from "@/components/Evidence";
 import {
   createOrganization, createIntegration, rotateIntegrationSecret, testIntegration, submitFixture, addSku,
-  runRepair, decideApproval, commitAndVerify, providerStatus,
+  runRepair, decideApproval, commitAndVerify, providerStatus, refuseIncident,
 } from "@/lib/ops.functions";
 
 export const Route = createFileRoute("/_authenticated/console")({
@@ -465,6 +465,9 @@ function Inspector({ d, inc, act, busy }: { d: Any; inc: Any; act: ActFn; busy: 
         </div>
       </section>
 
+      <ConflictAndRefuse d={d} inc={inc} ev={ev} runs={runs} act={act} busy={busy} />
+
+
       <section className="panel" aria-labelledby="hist">
         <div className="panel-head"><h2 id="hist" className="panel-title">Run history</h2></div>
         {runs.length === 0 ? <Empty>No attempts yet.</Empty> : (
@@ -634,6 +637,74 @@ function Audit({ d }: { d: Any }) {
           ))}
         </ul>
       )}
+    </section>
+  );
+}
+
+function fmt(v: unknown) { return v === undefined ? "— (absent)" : JSON.stringify(v); }
+
+function ConflictAndRefuse({ d, inc, ev, runs, act, busy }: { d: Any; inc: Any; ev: Any; runs: Any[]; act: ActFn; busy: string | null }) {
+  const fRefuse = useServerFn(refuseIncident);
+  const [reason, setReason] = useState("");
+  const original = ev?.conflicts_with_event_id ? d.events.find((e: Any) => e.id === ev.conflicts_with_event_id) : null;
+  const diff = useMemo(() => (original && ev ? diffPayloads(original.payload, ev.payload) : []), [original, ev]);
+  // Existing destination for the same order (loaded via RLS); verified only if a VERIFIED receipt points to it.
+  const dest = ev ? d.records.find((r: Any) => r.source === ev.source && r.external_order_id === ev.external_order_id) : null;
+  const destVerified = dest ? d.receipts.find((x: Any) => x.destination_record_id === dest.id && x.result === "VERIFIED") : null;
+  const runIds = new Set(runs.map((r: Any) => r.id));
+  const elig = refusalEligibility(inc.status, reason, {
+    hasDestinationEffect: d.records.some((r: Any) => runIds.has(r.run_id)),
+    hasLiveApproval: d.approvals.some((a: Any) => runIds.has(a.run_id) && ["PENDING", "APPROVED"].includes(a.status)),
+  });
+  const statusOk = ["OPEN", "FAILED"].includes(inc.status);
+  const canRole = d.role === "owner" || d.role === "operator";
+  const keep = !!(original && dest && destVerified);
+
+  return (
+    <section className="panel" aria-labelledby="refuse">
+      <div className="panel-head"><h2 id="refuse" className="panel-title">{original ? "Payload conflict & operator decision" : "Operator decision"}</h2></div>
+      {original && (
+        <div className="space-y-3 px-4 py-3 text-xs">
+          <p role="alert" className="text-destructive">This event reuses order id <span className="font-mono">{ev.source}/{ev.external_order_id}</span> with a different body than an earlier event. Nothing was merged automatically.</p>
+          <div className="overflow-x-auto">
+            <table className="w-full text-left font-mono">
+              <thead className="text-muted-foreground"><tr><th className="py-1 pr-3">field</th><th className="pr-3">original · {new Date(original.received_at).toLocaleString()} · {original.evidence_level}</th><th>incoming · {new Date(ev.received_at).toLocaleString()} · {ev.evidence_level}</th></tr></thead>
+              <tbody>
+                {diff.length === 0 ? <tr><td colSpan={3} className="py-1">No field differences detected.</td></tr> : diff.map((f) => (
+                  <tr key={f.path} className="border-t border-border"><td className="py-1 pr-3">{f.path} <span className="text-muted-foreground">({f.kind})</span></td><td className="pr-3">{fmt(f.original)}</td><td className="text-destructive">{fmt(f.incoming)}</td></tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <div className="rounded-md border border-border p-2">
+            <p className="font-semibold">Existing destination record for this order</p>
+            {dest ? (
+              <p className="mt-1 font-mono">{dest.source}/{dest.external_order_id} · {dest.amount_cents} {dest.currency} · {dest.sku} × {dest.quantity} · {dest.evidence_level} · {destVerified ? <span className="text-primary">independently VERIFIED ({new Date(destVerified.created_at).toLocaleString()})</span> : <span className="text-destructive">no VERIFIED receipt</span>}</p>
+            ) : <p className="mt-1 text-muted-foreground">None found. There is no preexisting validated business outcome for this order.</p>}
+          </div>
+        </div>
+      )}
+      <div className="border-t border-border px-4 py-3 text-xs">
+        {!statusOk ? (
+          <p className="text-muted-foreground">Refusal is only available from OPEN or FAILED (current: <span className="font-mono">{inc.status}</span>).</p>
+        ) : !canRole ? (
+          <p className="text-muted-foreground">Only owners and operators can refuse incidents.</p>
+        ) : (
+          <form className="space-y-2" onSubmit={(e) => {
+            e.preventDefault();
+            if (!elig.ok) return;
+            act("refuse", () => fRefuse({ data: { incidentId: inc.id, reason: reason.trim(), keepDestinationId: keep ? dest.id : undefined } }), () => { setReason(""); return keep ? "Incident refused; existing verified record kept unchanged" : "Incident refused; nothing was written"; });
+          }}>
+            <label htmlFor="refuse-reason" className="block font-semibold">Reason for refusal (10–500 characters, stored in the audit trail)</label>
+            <textarea id="refuse-reason" className="field min-h-16 w-full" value={reason} onChange={(e) => setReason(e.target.value)} minLength={10} maxLength={500} required />
+            {!keep && <p className="text-destructive">Warning: refusing closes this incident without any destination write. {original ? "No independently verified record exists for this order." : ""}</p>}
+            {!elig.ok && reason.trim().length > 0 && <p className="text-destructive">{elig.reason}</p>}
+            <button type="submit" className="btn-ghost border-destructive text-destructive" disabled={!elig.ok || !!busy}>
+              {busy === "refuse" ? "Refusing…" : keep ? "Refuse and keep existing" : "Refuse incident"}
+            </button>
+          </form>
+        )}
+      </div>
     </section>
   );
 }

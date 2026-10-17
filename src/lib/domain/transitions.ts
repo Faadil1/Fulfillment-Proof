@@ -92,3 +92,36 @@ export function reverifyOutcome(result: string): { escalate: boolean } {
 export function verificationAuditAction(result: string): string {
   return result === "VERIFIED" ? "write.verified" : "write.check_failed";
 }
+
+export const REFUSABLE = ["OPEN", "FAILED"] as const;
+
+/** Mirrors refuse_incident SQL guards (the DB is authoritative; this drives the UI and tests). */
+export function refusalEligibility(status: string, reason: string, ctx: { hasDestinationEffect: boolean; hasLiveApproval: boolean }): { ok: true } | { ok: false; reason: string } {
+  if (!(REFUSABLE as readonly string[]).includes(status)) return { ok: false, reason: `cannot refuse an incident in status ${status}` };
+  if (ctx.hasDestinationEffect) return { ok: false, reason: "a destination record exists for this incident; reconcile instead" };
+  if (ctx.hasLiveApproval) return { ok: false, reason: "a pending/approved proposal exists for this incident" };
+  const r = reason.trim();
+  if (r.length < 10 || r.length > 500) return { ok: false, reason: "reason must be 10-500 characters" };
+  return { ok: true };
+}
+
+export type FieldDiff = { path: string; original: unknown; incoming: unknown; kind: "changed" | "added" | "removed" };
+
+/** Field-level comparison of two payloads (flattened dot paths). Underscore-prefixed meta keys included. */
+export function diffPayloads(original: unknown, incoming: unknown): FieldDiff[] {
+  const flat = (v: unknown, p = "", out: Record<string, unknown> = {}) => {
+    if (v && typeof v === "object" && !Array.isArray(v)) {
+      for (const [k, x] of Object.entries(v as Record<string, unknown>)) flat(x, p ? `${p}.${k}` : k, out);
+    } else out[p] = v;
+    return out;
+  };
+  const a = flat(original), b = flat(incoming);
+  const keys = [...new Set([...Object.keys(a), ...Object.keys(b)])].sort();
+  const res: FieldDiff[] = [];
+  for (const k of keys) {
+    if (!(k in a)) res.push({ path: k, original: undefined, incoming: b[k], kind: "added" });
+    else if (!(k in b)) res.push({ path: k, original: a[k], incoming: undefined, kind: "removed" });
+    else if (JSON.stringify(a[k]) !== JSON.stringify(b[k])) res.push({ path: k, original: a[k], incoming: b[k], kind: "changed" });
+  }
+  return res;
+}
