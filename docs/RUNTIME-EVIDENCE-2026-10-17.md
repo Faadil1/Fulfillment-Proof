@@ -119,3 +119,20 @@ The signed-in operator completed a human approval and `Commit & verify` for test
 The owner successfully switched Stripe CLI to the authorized Stripe **live context** `acct_1TXRJrAY1xa1RYw5` for Projects infrastructure provisioning, then ran `stripe projects init fulfillment-proof` from the Codespaces checkout. CLI returned `Your project is ready` with project `fulfillment-proof` and project ID `project_61Vb3Gboaa5JldL2X16UgpHD1CA8XdO7YS7VU5JA8L4S`. CLI created `.projects/`, updated `.gitignore`, created `.claude/settings.json`, and added Stripe Projects skills.
 
 **Truth boundary:** `PROJECT_INITIALIZED` is proven by the operator-provided CLI output. This does **not** prove that `createos/project` or any other service has been provisioned, any project-managed credential has been consumed by the published Lovable application, or any payments have been processed. Those gates remain `BLOCKED` pending `stripe projects status`, service provisioning evidence, and an authenticated subsequent CreateOS runtime test with project-managed credentials. Stripe Projects' live-account context is an infrastructure requirement, not evidence of Stripe Payments live transactions. Never commit local `.env`, `.projects/vault/`, `.projects/state.local.json` or CLI auth credentials.
+
+## STRIPE PROJECTS SERVICE PROVISIONED — observed operator CLI (17 Oct 2026)
+
+The owner performed `stripe projects add createos/project` under the authorized **Stripe live-account infrastructure context**, account ending `RYw5`. Interactive checkout explicitly chose `createos/free` (Free tier, **$0**), then accepted the CreateOS provider terms and disclosure. Output confirmed:
+
+- `✓ Connected createos account` (owner-associated identity).
+- `✓ createos/free provisioned`
+- `✓ Resource requested`, `✓ Resource provisioned`, `✓ Credentials synced`, `✓ Project updated`.
+- `● createos/project ready`.
+- Project environment `default` contains `createos-plan` and `createos-project`, with eight created variables of form `CREATEOS_{PLAN,PROJECT}_{API_KEY,API_URL,CREDENTIALS,DASHBOARD_URL}`.
+- Project identifier `project_61Vb3Gboaa5JldL2X16UgpHD1CA8XdO7YS7VU5JA8L4S` (public project metadata, **not** a credential).
+
+**Stage boundary:** Stripe Projects `PROJECT_INITIALIZED`, `PROVIDER_CONNECTED`, `RESOURCE_PROVISIONED`, `CREDENTIALS_SYNCED` are supported by observed operator CLI output. `stripe projects status` after addition, a public `stripe projects share` link, and runtime use of the **new provisioned resource by the published Fulfillment Proof app** remain to be verified. The earlier sandbox run `sb-01m55t2svhvmbrn0s97xvz4dxm` used the app's preexisting `CREATEOS_SANDBOX_API_KEY`, so it **must not be falsely attributed** to Stripe Projects. In particular, `CREATEOS_PROJECT_API_KEY` (provider project control plane) must not be blindly substituted into the separately documented Sandbox SDK `CREATEOS_SANDBOX_API_KEY`.
+
+**Secret hygiene:** Never commit `.env`, credentials, or `.projects/vault/`; `stripe projects env` (without dump flags) lists names, not secrets. Stripe's current official docs say `.projects/state.json` and `.projects/state.local.json` are intended to be committed for project sharing, after reviewing that they contain metadata rather than secret values. The repository's public `.gitignore` was aligned with this document. The new CLI-generated local changes and permissions have **not yet been reviewed or committed**.
+
+**Citation**: https://docs.stripe.com/projects.md and https://createos.sh/docs/Services/Stripe-Projects/
