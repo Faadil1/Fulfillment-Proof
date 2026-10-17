@@ -2,7 +2,7 @@
 
 **Build Agents That Run Code — CreateOS × Stripe Projects Hackathon (17 October 2026)**
 
-> **Status: BUILD IN PROGRESS.** This public repository is the submission source of truth. Do not infer sponsor compliance, a live agent run, or a completed business outcome from its existence.
+> **Status: BUILD IN PROGRESS — CreateOS Sandbox smoke-test confirmed.** This public repository is the submission source of truth. A live CreateOS sandbox ran real code, but the full business recovery and Stripe Projects provisioning remain unproven.
 
 ## Problem
 
@@ -44,14 +44,15 @@ CreateOS EU API address provided by organizers: https://api-eu.sb.createos.sh/
 
 ## Development
 
-Application code is currently being generated in Lovable. This repository will receive the source when it is available, then the real package scripts, configuration and test instructions will be documented. Avoid GitHub Actions due to unavailable Actions budget.
+Core application source, PostgreSQL migration, backend modules, auth routes, incident UI, TypeScript tooling and Bun lockfile have been transferred from the Lovable project. See [implementation guide](docs/IMPLEMENTATION.md) and [runtime evidence log](docs/RUNTIME-EVIDENCE-2026-10-17.md). The default UI component library and binary favicon are not yet fully mirrored. The published Lovable app remains the runtime target; do not claim GitHub runtime parity before building and testing this repository. Avoid GitHub Actions due to unavailable Actions budget.
 
 ## Submission checklist (not yet achieved)
 
 - [ ] Application source synchronized and reviewed
 - [ ] Authentication, database, security and RLS verified
 - [ ] Stripe Projects provisioner proof
-- [ ] CreateOS generated/repaired-code execution proof
+- [x] CreateOS real sandbox execution smoke-test, code run and constrained egress (NOT full AI repair proof)
+- [ ] End-to-end AI generated/repaired code → real operator business outcome
 - [ ] Authorized write + independent destination readback
 - [ ] Negative/refusal and idempotency recovery tests
 - [ ] Public runtime tested and accessible
