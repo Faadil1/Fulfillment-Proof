@@ -70,3 +70,15 @@ With the participant signed into the published app, the provider-check action pe
 This verifies the **published authenticated runtime's provider reachability**, not the full business transaction or Stripe Projects provisioning. The screenshot disclosed a Stripe account identifier and request identifier; these are intentionally not repeated here.
 
 An independent read-only database count at the same point showed one organization and zero integrations, inbound events, incidents, agent runs, approvals, destination records and verification receipts. The next required reality gate is an end-to-end authenticated `TEST_FIXTURE` incident with CreateOS execution, policy decision and independent destination readback.
+
+## Run persistence regression: fractional CreateOS execution duration
+
+On 17 Oct 2026, the authenticated operator triggered `Diagnose & repair` for a `TEST_FIXTURE` incident with six contract violations. The operation failed before recording a `runs` row with the PostgreSQL error `invalid input syntax for type integer: "72.967"`.
+
+**Root cause verified in source and database schema:** CreateOS returned a fractional `exec_ms` value, but `public.runs.exec_ms` is `integer`. The run insert rejected 72.967; incident was left `DIAGNOSING` with zero attempts recorded. No destination rows or independent receipts were created.
+
+**Repair:** Introduced `normalizeExecMs`, at both the provider boundary and the persistence boundary, to round valid finite non-negative durations (72.967 → 73) to a bounded integer and map invalid inputs to null. Added a guarded failure path to make DIAGNOSING incidents recoverable and a targeted regression suite. Lovable build agent reported **31/31 tests passing**, typecheck clean and build successful.
+
+**Recovery verified independently:** Only incident `736c6140-35e4-4e98-a099-9cbeeda70d4a` was conditionally reset from `DIAGNOSING` to `OPEN`, while retaining `attempts=0`; an `incident.recovered_after_exec_ms_serialization_failure` audit event exists. No evidence of successful business repair from the failed attempt survives, so it is **UNKNOWN** rather than success. App redeploy was initiated, but full production retry had not yet been observed at this audit point.
+
+Code sync commit: `e048a5b21cc6d05668c12945c00c47f342986d4c`.
