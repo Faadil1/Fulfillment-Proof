@@ -43,6 +43,20 @@
       "when": 1792276095932,
       "tag": "0005_refuse_incident_rpc",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1792276433804,
+      "tag": "0006_verified_patch_registry",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1792276762647,
+      "tag": "0007_promote_patch_provenance_integrity",
+      "breakpoints": true
     }
   ]
 }

@@ -37,7 +37,7 @@ export type RunLike = { id: string; incident_id: string; org_id: string; attempt
 
 /** Whether a run's execution evidence permits it to be written at all. */
 export function runExecutionEligible(run: Pick<RunLike, "generation_status" | "execution_status">): boolean {
-  return (run.generation_status === "GENERATED" && run.execution_status === "SUCCEEDED")
+  return ((run.generation_status === "GENERATED" || run.generation_status === "REUSED_VERIFIED_PATCH") && run.execution_status === "SUCCEEDED")
     || (run.generation_status === "NOT_NEEDED" && run.execution_status === "NOT_NEEDED");
 }
 

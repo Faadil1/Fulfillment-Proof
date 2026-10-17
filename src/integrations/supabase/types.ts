@@ -483,8 +483,10 @@ export type Database = {
           incident_id: string
           model: string | null
           org_id: string
+          patch_id: string | null
           policy: Json | null
           proposed_record: Json | null
+          repair_strategy: string | null
           sandbox_id: string | null
           sandbox_shape: string | null
           stderr: string | null
@@ -507,8 +509,10 @@ export type Database = {
           incident_id: string
           model?: string | null
           org_id: string
+          patch_id?: string | null
           policy?: Json | null
           proposed_record?: Json | null
+          repair_strategy?: string | null
           sandbox_id?: string | null
           sandbox_shape?: string | null
           stderr?: string | null
@@ -531,8 +535,10 @@ export type Database = {
           incident_id?: string
           model?: string | null
           org_id?: string
+          patch_id?: string | null
           policy?: Json | null
           proposed_record?: Json | null
+          repair_strategy?: string | null
           sandbox_id?: string | null
           sandbox_shape?: string | null
           stderr?: string | null
@@ -551,6 +557,13 @@ export type Database = {
             columns: ["org_id"]
             isOneToOne: false
             referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "runs_patch_id_fkey"
+            columns: ["patch_id"]
+            isOneToOne: false
+            referencedRelation: "verified_patches"
             referencedColumns: ["id"]
           },
         ]
@@ -603,6 +616,98 @@ export type Database = {
           },
         ]
       }
+      verified_patches: {
+        Row: {
+          code: string
+          code_hash: string
+          destination_record_id: string
+          evidence_level: string
+          fingerprint: string
+          id: string
+          org_id: string
+          promoted_at: string
+          promoted_by: string
+          provenance_receipt_id: string
+          provenance_run_id: string
+          revoke_reason: string | null
+          revoked_at: string | null
+          revoked_by: string | null
+          source: string
+          status: string
+          version: number
+          violation_signature: string
+        }
+        Insert: {
+          code: string
+          code_hash: string
+          destination_record_id: string
+          evidence_level: string
+          fingerprint: string
+          id?: string
+          org_id: string
+          promoted_at?: string
+          promoted_by: string
+          provenance_receipt_id: string
+          provenance_run_id: string
+          revoke_reason?: string | null
+          revoked_at?: string | null
+          revoked_by?: string | null
+          source: string
+          status?: string
+          version: number
+          violation_signature: string
+        }
+        Update: {
+          code?: string
+          code_hash?: string
+          destination_record_id?: string
+          evidence_level?: string
+          fingerprint?: string
+          id?: string
+          org_id?: string
+          promoted_at?: string
+          promoted_by?: string
+          provenance_receipt_id?: string
+          provenance_run_id?: string
+          revoke_reason?: string | null
+          revoked_at?: string | null
+          revoked_by?: string | null
+          source?: string
+          status?: string
+          version?: number
+          violation_signature?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "verified_patches_destination_record_id_fkey"
+            columns: ["destination_record_id"]
+            isOneToOne: false
+            referencedRelation: "destination_records"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "verified_patches_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "verified_patches_provenance_receipt_id_fkey"
+            columns: ["provenance_receipt_id"]
+            isOneToOne: false
+            referencedRelation: "verification_receipts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "verified_patches_provenance_run_id_fkey"
+            columns: ["provenance_run_id"]
+            isOneToOne: false
+            referencedRelation: "runs"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
     }
     Views: {
       [_ in never]: never
@@ -614,6 +719,7 @@ export type Database = {
         Args: { _approval: string; _decision: string; _note: string }
         Returns: undefined
       }
+      drift_signature: { Args: { _violations: Json }; Returns: string }
       ingest_signed_event: {
         Args: {
           _body_sha256: string
@@ -629,9 +735,14 @@ export type Database = {
         Returns: Json
       }
       is_member: { Args: { _org: string }; Returns: boolean }
+      promote_verified_patch: { Args: { _run: string }; Returns: Json }
       refuse_incident: {
         Args: { _incident: string; _keep_destination?: string; _reason: string }
         Returns: Json
+      }
+      revoke_verified_patch: {
+        Args: { _patch: string; _reason: string }
+        Returns: undefined
       }
       rotate_integration_secret: {
         Args: { _hint: string; _integration: string; _secret: string }
