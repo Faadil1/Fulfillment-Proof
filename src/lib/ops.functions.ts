@@ -8,6 +8,7 @@ import { sha256Hex, stableStringify, NormalizedOrder } from "@/lib/domain/contra
 import { evaluatePolicy, type PolicyDecision } from "@/lib/domain/policy";
 import { verifyDestination, VERIFIER_VERSION } from "@/lib/domain/verifier";
 import { generateSigningSecret, secretHint } from "@/lib/domain/secret";
+import { normalizeExecMs } from "@/lib/domain/exec";
 
 const MAX_ATTEMPTS_PER_INCIDENT = 6;
 const MAX_GEN_RETRIES = 2;
@@ -172,6 +173,10 @@ export const runRepair = createServerFn({ method: "POST" })
     const knownSkus = (skus ?? []).map((s: { sku: string }) => s.sku);
     await db.from("incidents").update({ status: "DIAGNOSING", updated_at: new Date().toISOString() }).eq("id", inc.id);
 
+    // Operation boundary: any unexpected failure below (e.g. a run-row insert rejecting provider
+    // data) must not strand the incident in DIAGNOSING with lost evidence. Return it to OPEN
+    // (only if still DIAGNOSING — terminal states set by finishRun are preserved), audit, rethrow.
+    try {
     const violations = inc.violations as unknown[];
     const base = { org_id: inc.org_id, incident_id: inc.id, created_by: context.userId };
     let attempt = inc.attempts;
@@ -242,13 +247,21 @@ export const runRepair = createServerFn({ method: "POST" })
     }
     await db.from("incidents").update({ attempts: attempt, status: "FAILED" }).eq("id", inc.id);
     return { runId: lastRunId, outcome: "FAILED_AFTER_RETRIES" };
+    } catch (e) {
+      const msg = (e as Error).message.slice(0, 300);
+      await db.from("incidents").update({ status: "OPEN", updated_at: new Date().toISOString() }).eq("id", inc.id).eq("status", "DIAGNOSING");
+      await audit(inc.org_id, context.userId, "incident.repair_failed", { incident_id: inc.id, error: msg });
+      throw new Error(`Repair failed before completion: ${msg}. Incident returned to OPEN; safe to retry.`);
+    }
   });
 
 async function finishRun(db: any, row: any): Promise<string> {
   const { proposed, policy, ...rest } = row as { proposed?: unknown; policy?: PolicyDecision };
+  // Defense in depth: normalize exec_ms here too so no call path can insert a fractional/invalid int4.
+  const rawExecMs: unknown = (rest as Record<string, unknown>)["exec_ms"];
   const { data: run, error } = await db
     .from("runs")
-    .insert({ ...rest, proposed_record: proposed ?? null, policy: policy ?? null })
+    .insert({ ...rest, exec_ms: normalizeExecMs(rawExecMs), proposed_record: proposed ?? null, policy: policy ?? null })
     .select("id")
     .single();
   if (error) throw new Error(error.message);

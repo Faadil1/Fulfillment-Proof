@@ -1,5 +1,6 @@
 // Real CreateOS Sandbox execution via @nodeops-createos/sandbox. No local fallback exists by design.
 import { createClient } from "@nodeops-createos/sandbox";
+import { normalizeExecMs } from "@/lib/domain/exec";
 
 export const SANDBOX_SHAPE = "s-1vcpu-1gb";
 export const SANDBOX_ROOTFS = "devbox:1";
@@ -50,7 +51,7 @@ export type SandboxOutcome = {
   stdout?: string;
   stderr?: string;
   exit_code?: number;
-  exec_ms?: number;
+  exec_ms?: number | undefined;
   parsed?: { tests: { name: string; pass: boolean; error?: string }[]; proposed: unknown; error: string | null };
   error?: string;
   destroyed?: boolean;
@@ -83,7 +84,8 @@ export async function runInSandbox(code: string, payload: unknown, tests: unknow
     out.stdout = r.result.stdout.slice(0, 20_000);
     out.stderr = (r.result.stderr + (r.result.error ? `\n[agent] ${r.result.error}` : "")).slice(0, 20_000);
     out.exit_code = r.result.exit_code;
-    out.exec_ms = r.exec_ms;
+    // SDK may return fractional ms (observed 72.967); runs.exec_ms is int4 — normalize here.
+    out.exec_ms = normalizeExecMs(r.exec_ms) ?? undefined;
     const line = r.result.stdout.split("\n").find((l) => l.startsWith("FP_RESULT "));
     if (line) out.parsed = JSON.parse(line.slice(10));
     out.status = r.result.exit_code === 0 && out.parsed ? "SUCCEEDED" : "FAILED";
