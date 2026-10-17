@@ -121,7 +121,13 @@ export function verifyDestinationReadback(
   if (readbackRows.length !== 1)
     return { state: "REFUSED", reason: "DUPLICATE_DESTINATION_RECORDS" };
 
-  const parsed = parseNormalizedOrder(readbackRows[0]);
+  // Database readback rows may contain trusted metadata (id, created_at, etc).
+  // Only project the contract fields; do not relax validation of agent output.
+  const row = readbackRows[0];
+  if (!object(row))
+    return { state: "REFUSED", reason: "INVALID_DESTINATION_RECORD" };
+  const projected = Object.fromEntries([...keys].map(key => [key, row[key]]));
+  const parsed = parseNormalizedOrder(projected);
   if (!parsed.ok)
     return { state: "REFUSED", reason: "INVALID_DESTINATION_RECORD" };
   const got = parsed.order;
