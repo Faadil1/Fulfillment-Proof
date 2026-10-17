@@ -19,6 +19,17 @@ Fulfillment Proof is an AI-native, **outcome-gated integration recovery** operat
 5. Refuse, require human approval, or execute an exactly scoped idempotent operation under deterministic policy.
 6. Independently re-read destination state, verify that the correct record exists exactly once, and store a receipt.
 
+## Product depth — after first live slice
+
+**Implemented and published (Lovable-reported 119/119 tests; fresh GitHub checkout test still pending):**
+
+- **Atomic state transitions**: claim each repair exactly once, bind approval to latest proposal, reject stale/failed run commits, represent uncertain writes as RECONCILE, independent re-verification/alerts.
+- **Real signed webhook delivery semantics**: HMAC authentication, dedup identical signed retries with same event/incident, persisted replay count, separate flagged conflicts when the same order id arrives with different contents.
+- **Negative operator consequence**: reasoned REFUSE action in an authorized SQL transaction; diff conflicting orders, optionally keep a separately verified earlier destination. REFUSED cases never write.
+- **Verified transform registry**: promote only an actual CreateOS-generated-and-executed patch tied to a VERIFIED receipt, version and revoke it; on a new event with the same drift re-execute the proven code + original tests in a new CreateOS Sandbox, quarantine regressions, fail over to AI, require human approval and re-verify destination.
+
+These features are **not claimed as all independently live-tested**. The durable first TEST_FIXTURE outcome is observed. First live post-hardening replay HTTP test, refusal, patch promotion and patch reuse are still pending; see [runtime evidence](docs/RUNTIME-EVIDENCE-2026-10-17.md).
+
 ## Trust & safety constraints
 
 - No VERIFIED status without independent persisted-state readback and matching operation identifiers.
@@ -60,12 +71,12 @@ See the [2–3 minute judge video shotlist](docs/JUDGE-DEMO-2-5-MINUTES.md), exp
 - [x] CreateOS Sandbox real AI-generated repair-code execution (exit 0, 4/4 generated tests, restricted egress)
 - [x] TEST_FIXTURE AI-generated code → independently authorized persistent destination effect
 - [x] Human-approved idempotent write and 9/9 independent destination readback receipt
-- [ ] Negative/refusal and idempotency recovery tests
+- [x] Negative/refusal, idempotency and patch provenance unit tests (119 Lovable-reported; live post-hardening paths remain pending)
 - [x] Public Lovable runtime tested by authenticated operator; console requires login
 - [x] README updated with exact functionality and outstanding limitations
 - [ ] 2–3 minute public YouTube video with team member on camera
 - [ ] Public X or LinkedIn post
-- [ ] Projects leaderboard submission with code CreateOS-2026
+- [ ] Projects leaderboard submission — hackathon-specific code not yet confirmed; do not use unverified CreateOS-2026
 - [ ] Official form submission by 17:30 PT / 20:30 EDT
 
 ## Governance
