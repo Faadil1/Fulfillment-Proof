@@ -226,6 +226,50 @@ export const runRepair = createServerFn({ method: "POST" })
     const { runInSandbox, createosConfig, SANDBOX_SHAPE, SANDBOX_EGRESS } = await import("@/lib/server/createos.server");
     let previousError: string | undefined;
     let lastRunId = "";
+
+    // 1) Verified-patch reuse: an ACTIVE patch proven on the same source + drift fingerprint is
+    // executed in a real CreateOS sandbox on THIS payload. Never auto-writes: always needs approval.
+    if (createosConfig().configured && attempt < MAX_ATTEMPTS_PER_INCIDENT) {
+      const { driftFingerprint, classifyReuse } = await import("@/lib/domain/patches");
+      const fp = await driftFingerprint(ev.source, violations as { field: string; code: string }[]);
+      const { data: patch } = await db.from("verified_patches").select("*").eq("org_id", inc.org_id).eq("source", ev.source).eq("fingerprint", fp).eq("status", "ACTIVE").maybeSingle();
+      if (patch) {
+        attempt++;
+        const hashOk = (await sha256Hex(patch.code)) === patch.code_hash;
+        const { validateProvenanceTests } = await import("@/lib/domain/patches");
+        const { data: provRun } = await db.from("runs").select("generation_log, org_id").eq("id", patch.provenance_run_id).maybeSingle();
+        const provTests = provRun && provRun.org_id === inc.org_id ? validateProvenanceTests((provRun.generation_log as any)?.[0]?.tests) : null;
+        // Original model-generated tests re-run in the NEW sandbox alongside the new payload.
+        const sb = hashOk && provTests ? await runInSandbox(patch.code, payload, provTests) : null;
+        const testResults = sb?.parsed?.tests ?? null;
+        const proposed = sb?.status === "SUCCEEDED" ? sb.parsed?.proposed : undefined;
+        const policy = proposed !== undefined ? evaluatePolicy(proposed, payload, ev.source, knownSkus) : null;
+        const verdict = classifyReuse({ patchStatus: patch.status, codeHashMatches: hashOk, sandboxStatus: sb?.status ?? "SKIPPED", proposed, payload, policyAllowed: policy ? policy.allowed : null, expectedTests: provTests?.length ?? 0, testResults });
+        const common = {
+          ...base, attempt, model: null, generated_code: patch.code, code_hash: patch.code_hash, generation_status: "REUSED_VERIFIED_PATCH",
+          repair_strategy: "VERIFIED_PATCH", patch_id: patch.id,
+          generation_log: [{ patch_id: patch.id, patch_version: patch.version, fingerprint: fp, provenance_run_id: patch.provenance_run_id, evidence: patch.evidence_level, sandbox_destroyed: sb?.destroyed ?? null, verdict,
+            provenance_tests: { expected: provTests?.length ?? 0, ran: testResults?.length ?? 0, passed: (testResults ?? []).filter((t: { pass: boolean }) => t.pass).length, results: testResults } }],
+          execution_status: sb?.status ?? (hashOk ? "REJECTED_NO_TESTS" : "REJECTED_HASH"), sandbox_id: sb?.sandbox_id ?? null, sandbox_shape: SANDBOX_SHAPE, egress: SANDBOX_EGRESS,
+          stdout: sb?.stdout ?? null, stderr: sb?.stderr ?? null, exit_code: sb?.exit_code ?? null, exec_ms: sb?.exec_ms ?? null,
+        };
+        if (verdict.kind === "PROPOSE" && policy) {
+          const gated: PolicyDecision = { ...policy, requires_approval: true, reasons: [...policy.reasons, `reused verified patch v${patch.version} (${patch.evidence_level} provenance): human approval required`] };
+          lastRunId = await finishRun(db, { ...common, proposed, policy: gated });
+          await db.from("incidents").update({ attempts: attempt }).eq("id", inc.id);
+          return { runId: lastRunId, outcome: "PROPOSED_FROM_VERIFIED_PATCH" };
+        }
+        const why = "reason" in verdict ? verdict.reason : "no proposal produced";
+        // Record the failed reuse (no proposal => cannot be written), then fall back to AI generation.
+        // A non-SUCCEEDED execution status keeps this run commit-ineligible even with a stored proposal.
+        await finishRun(db, { ...common, execution_status: verdict.kind === "QUARANTINE" && common.execution_status === "SUCCEEDED" ? "REJECTED_REUSE" : common.execution_status, error: `verified patch not used: ${why}` });
+        if (verdict.kind === "QUARANTINE") {
+          const { data: q } = await db.from("verified_patches").update({ status: "REVOKED", revoked_at: new Date().toISOString(), revoke_reason: `auto-quarantined: ${why}`.slice(0, 300) }).eq("id", patch.id).eq("status", "ACTIVE").select("id");
+          if (q?.length) await audit(inc.org_id, context.userId, "patch.quarantined", { patch_id: patch.id, version: patch.version, incident_id: inc.id, reason: why.slice(0, 200) });
+        }
+        previousError = `A previously verified transform failed on this payload: ${why}`;
+      }
+    }
     for (let g = 0; g <= MAX_GEN_RETRIES && attempt < MAX_ATTEMPTS_PER_INCIDENT; g++) {
       attempt++;
       const log: unknown[] = [];
@@ -292,7 +336,7 @@ async function finishRun(db: any, row: any): Promise<string> {
   const rawExecMs: unknown = (rest as Record<string, unknown>)["exec_ms"];
   const { data: run, error } = await db
     .from("runs")
-    .insert({ ...rest, exec_ms: normalizeExecMs(rawExecMs), proposed_record: proposed ?? null, policy: policy ?? null })
+    .insert({ repair_strategy: (rest as { generation_status?: string }).generation_status === "NOT_NEEDED" ? "NONE" : "AI_GENERATION", ...rest, exec_ms: normalizeExecMs(rawExecMs), proposed_record: proposed ?? null, policy: policy ?? null })
     .select("id")
     .single();
   if (error) throw new Error(error.message);
@@ -492,4 +536,31 @@ export const refuseIncident = createServerFn({ method: "POST" })
       throw new Error("Refusal could not be stored; nothing was changed");
     }
     return res as { incident_id: string; status: string; kept_destination_record_id: string | null };
+  });
+
+/** Promote a sandbox-SUCCEEDED, independently VERIFIED run to the org's verified-patch registry (SQL-guarded). */
+export const promoteVerifiedPatch = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d) => z.object({ runId: z.string().uuid() }).parse(d))
+  .handler(async ({ data, context }) => {
+    const { data: res, error } = await context.supabase.rpc("promote_verified_patch", { _run: data.runId });
+    if (error) {
+      const msg = String(error.message ?? "");
+      if (/^(Blocked|Forbidden)|not found/i.test(msg)) throw new Error(msg);
+      throw new Error("Promotion could not be stored; nothing was changed");
+    }
+    return res as { patch_id: string; version: number; fingerprint: string };
+  });
+
+export const revokeVerifiedPatch = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d) => z.object({ patchId: z.string().uuid(), reason: z.string().trim().min(5).max(300) }).parse(d))
+  .handler(async ({ data, context }) => {
+    const { error } = await context.supabase.rpc("revoke_verified_patch", { _patch: data.patchId, _reason: data.reason });
+    if (error) {
+      const msg = String(error.message ?? "");
+      if (/^(Blocked|Forbidden)|not found/i.test(msg)) throw new Error(msg);
+      throw new Error("Revocation could not be stored; nothing was changed");
+    }
+    return { ok: true };
   });

@@ -8,7 +8,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { Evidence, Status, Empty } from "@/components/Evidence";
 import {
   createOrganization, createIntegration, rotateIntegrationSecret, testIntegration, submitFixture, addSku,
-  runRepair, decideApproval, commitAndVerify, providerStatus, refuseIncident,
+  runRepair, decideApproval, commitAndVerify, providerStatus, refuseIncident, promoteVerifiedPatch, revokeVerifiedPatch,
 } from "@/lib/ops.functions";
 
 export const Route = createFileRoute("/_authenticated/console")({
@@ -40,7 +40,8 @@ async function loadWorkspace() {
     q("destination_records"), q("verification_receipts", "created_at", 100), q("audit_events", "created_at", 40),
     (supabase.from("known_skus").select("sku").eq("org_id", org) as any).then((r: Any) => r.data ?? []), q("provider_checks", "created_at", 10),
   ]);
-  return { org, orgName: m.organizations?.name as string, role: m.role as string, integrations, events, incidents, runs, approvals, records, receipts, audit, skus: skus.map((s: Any) => s.sku) as string[], checks };
+  const patches = await (supabase.from("verified_patches" as never).select("*").eq("org_id", org).order("promoted_at", { ascending: false }).limit(50) as any).then((r: Any) => (r.data ?? []) as Any[]);
+  return { org, orgName: m.organizations?.name as string, role: m.role as string, integrations, events, incidents, runs, approvals, records, receipts, audit, skus: skus.map((s: Any) => s.sku) as string[], checks, patches };
 }
 
 const DRIFT_FIXTURE = (source: string) =>
@@ -127,6 +128,7 @@ function Console() {
             )}
           </section>
           <Events d={d} />
+          <PatchRegistry d={d} act={act} busy={busy} />
         </div>
         <div className="space-y-5 min-w-0">
           {inc ? <Inspector d={d} inc={inc} act={act} busy={busy} /> : (
@@ -466,6 +468,7 @@ function Inspector({ d, inc, act, busy }: { d: Any; inc: Any; act: ActFn; busy: 
       </section>
 
       <ConflictAndRefuse d={d} inc={inc} ev={ev} runs={runs} act={act} busy={busy} />
+      <RepairProvenance d={d} inc={inc} run={run} runs={runs} act={act} busy={busy} />
 
 
       <section className="panel" aria-labelledby="hist">
@@ -475,7 +478,7 @@ function Inspector({ d, inc, act, busy }: { d: Any; inc: Any; act: ActFn; busy: 
             {runs.map((r: Any) => (
               <button key={r.id} onClick={() => setRunSel(r.id)} aria-pressed={run?.id === r.id}
                 className={`rounded-sm border px-2 py-1 font-mono text-[11px] ${run?.id === r.id ? "border-primary bg-accent" : "border-border"}`}>
-                #{r.attempt} {r.generation_status}/{r.execution_status}
+                #{r.attempt} {r.repair_strategy === "VERIFIED_PATCH" ? "♻ patch" : r.repair_strategy === "AI_GENERATION" ? "AI" : ""} {r.generation_status}/{r.execution_status}
               </button>
             ))}
           </div>
@@ -705,6 +708,73 @@ function ConflictAndRefuse({ d, inc, ev, runs, act, busy }: { d: Any; inc: Any; 
           </form>
         )}
       </div>
+    </section>
+  );
+}
+
+function RepairProvenance({ d, inc, run, runs, act, busy }: { d: Any; inc: Any; run: Any; runs: Any[]; act: ActFn; busy: string | null }) {
+  const fPromote = useServerFn(promoteVerifiedPatch);
+  if (!run) return null;
+  const patch = run.patch_id ? d.patches.find((p: Any) => p.id === run.patch_id) : null;
+  const receipt = d.receipts.find((r: Any) => r.run_id === run.id && r.result === "VERIFIED" && r.destination_record_id);
+  const latest = runs.filter((r: Any) => r.proposed_record).sort((a: Any, b: Any) => b.attempt - a.attempt)[0];
+  const already = d.patches.some((p: Any) => p.provenance_run_id === run.id);
+  const canRole = d.role === "owner" || d.role === "operator";
+  const eligible = canRole && run.generation_status === "GENERATED" && run.execution_status === "SUCCEEDED" && inc.status === "VERIFIED" && latest?.id === run.id && !!receipt && !already;
+  return (
+    <section className="panel" aria-labelledby="prov">
+      <div className="panel-head"><h2 id="prov" className="panel-title">Repair provenance · run #{run.attempt}</h2></div>
+      <div className="space-y-2 px-4 py-3 text-xs">
+        {run.repair_strategy === "VERIFIED_PATCH" ? (
+          <p><b>Verified patch reused</b>{patch ? <> · v{patch.version} · <Evidence level={patch.evidence_level} /> · proven code <span className="font-mono">{patch.code_hash.slice(0, 12)}</span> · status {patch.status}</> : " · patch record not readable"}. Executed in CreateOS on this payload: <span className="font-mono">{run.execution_status}</span>{run.sandbox_id ? ` (${run.sandbox_id})` : ""}. Human approval is always required for reused patches.</p>
+        ) : run.repair_strategy === "AI_GENERATION" ? (
+          <p><b>New AI generation</b> · {run.model ?? "model unknown"} · <span className="font-mono">{run.generation_status}/{run.execution_status}</span></p>
+        ) : run.repair_strategy === "NONE" ? <p>No transform needed (payload already met the contract).</p> : <p className="text-muted-foreground">Strategy not recorded (run predates the patch registry).</p>}
+        {run.error && <p className="text-destructive">{run.error}</p>}
+        {already ? <p className="text-primary">This run is the provenance of a registered patch.</p> : canRole && run.generated_code && (
+          <div>
+            <button className="btn-ghost" disabled={!eligible || !!busy} onClick={() => act("promote", () => fPromote({ data: { runId: run.id } }), (r) => `Promoted as verified patch v${r.version}`)}>Promote verified repair</button>
+            {!eligible && <p className="mt-1 text-muted-foreground">Requires: code that SUCCEEDED in the sandbox, incident VERIFIED, latest proposal, and a VERIFIED receipt linked to a destination record.</p>}
+          </div>
+        )}
+      </div>
+    </section>
+  );
+}
+
+function PatchRegistry({ d, act, busy }: { d: Any; act: ActFn; busy: string | null }) {
+  const fRevoke = useServerFn(revokeVerifiedPatch);
+  const [why, setWhy] = useState<Record<string, string>>({});
+  const canRole = d.role === "owner" || d.role === "operator";
+  const uses = (id: string) => d.runs.filter((r: Any) => r.patch_id === id);
+  return (
+    <section className="panel" aria-labelledby="patches">
+      <div className="panel-head"><h2 id="patches" className="panel-title">Verified patch registry</h2></div>
+      {d.patches.length === 0 ? <Empty>No promoted patches. Promote a VERIFIED repair from its run to reuse it on future incidents with the same drift.</Empty> : (
+        <ul className="divide-y divide-border text-xs">
+          {d.patches.map((p: Any) => {
+            const u = uses(p.id);
+            return (
+              <li key={p.id} className="space-y-1 px-4 py-2">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="font-mono">{p.source} v{p.version}</span>
+                  <span className={p.status === "ACTIVE" ? "text-primary" : "text-destructive"}>{p.status}</span>
+                  <Evidence level={p.evidence_level} />
+                  <span className="ml-auto text-muted-foreground">reused {u.length}× · {u.filter((r: Any) => r.proposed_record && r.execution_status === "SUCCEEDED").length} proposals</span>
+                </div>
+                <p className="font-mono text-muted-foreground">fingerprint {p.fingerprint.slice(0, 12)} · code {p.code_hash.slice(0, 12)} · {p.violation_signature}</p>
+                {p.revoke_reason && <p className="text-destructive">{p.revoke_reason}</p>}
+                {p.status === "ACTIVE" && canRole && (
+                  <form className="flex gap-2" onSubmit={(e) => { e.preventDefault(); act("revoke", () => fRevoke({ data: { patchId: p.id, reason: (why[p.id] ?? "").trim() } }), () => "Patch revoked"); }}>
+                    <input aria-label="Revocation reason" className="field flex-1" placeholder="Reason to revoke" minLength={5} maxLength={300} required value={why[p.id] ?? ""} onChange={(e) => setWhy({ ...why, [p.id]: e.target.value })} />
+                    <button className="btn-ghost text-destructive" disabled={!!busy}>Revoke</button>
+                  </form>
+                )}
+              </li>
+            );
+          })}
+        </ul>
+      )}
     </section>
   );
 }
