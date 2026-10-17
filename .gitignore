@@ -34,5 +34,6 @@ tmp/
 *.sqlite
 *.sqlite-journal
 
-# Stripe Projects local-only credentials/state
-.projects/state.local.json
+# Stripe Projects: retain shared state.json/state.local.json for collaboration after review.
+# Keep encrypted credential caches and machine caches out of version control.
+.projects/cache/
