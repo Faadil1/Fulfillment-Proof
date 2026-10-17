@@ -9,6 +9,7 @@ import { evaluatePolicy, type PolicyDecision } from "@/lib/domain/policy";
 import { verifyDestination, VERIFIER_VERSION } from "@/lib/domain/verifier";
 import { generateSigningSecret, secretHint } from "@/lib/domain/secret";
 import { normalizeExecMs } from "@/lib/domain/exec";
+import { canClaimRepair, staleCutoff, commitEligibility, reverifyOutcome, verificationAuditAction } from "@/lib/domain/transitions";
 
 const MAX_ATTEMPTS_PER_INCIDENT = 6;
 const MAX_GEN_RETRIES = 2;
@@ -165,13 +166,23 @@ export const runRepair = createServerFn({ method: "POST" })
     const { data: inc } = await db.from("incidents").select("*, inbound_events(*)").eq("id", data.incidentId).single();
     if (!inc) throw new Error("incident not found");
     await assertOperator(context, inc.org_id);
-    if (["VERIFIED", "REFUSED"].includes(inc.status)) throw new Error(`incident is ${inc.status}; open a new incident instead`);
     if (inc.attempts >= MAX_ATTEMPTS_PER_INCIDENT) throw new Error("attempt budget exhausted for this incident");
+    const claim = canClaimRepair(inc.status, inc.updated_at);
+    if (!claim.ok) throw new Error(`Blocked: ${claim.reason}`);
     const ev = (inc as any).inbound_events;
+    if (!ev || ev.org_id !== inc.org_id) throw new Error("Blocked: incident/event org mismatch");
     const payload = ev.payload as Record<string, unknown>;
     const { data: skus } = await db.from("known_skus").select("sku").eq("org_id", inc.org_id);
     const knownSkus = (skus ?? []).map((s: { sku: string }) => s.sku);
-    await db.from("incidents").update({ status: "DIAGNOSING", updated_at: new Date().toISOString() }).eq("id", inc.id);
+    // Atomic compare-and-set claim: only OPEN/FAILED, or a DIAGNOSING claim older than the TTL.
+    const { data: claimed, error: claimErr } = await db.from("incidents")
+      .update({ status: "DIAGNOSING", updated_at: new Date().toISOString() })
+      .eq("id", inc.id)
+      .or(`status.in.(OPEN,FAILED),and(status.eq.DIAGNOSING,updated_at.lt.${staleCutoff()})`)
+      .select("attempts");
+    if (claimErr) throw new Error("Could not claim incident; nothing was run");
+    if (!claimed?.length) throw new Error("Blocked: another request claimed or changed this incident; refresh and retry");
+    if (claim.recovered) await audit(inc.org_id, context.userId, "incident.stale_claim_recovered", { incident_id: inc.id, previous_updated_at: inc.updated_at });
 
     // Operation boundary: any unexpected failure below (e.g. a run-row insert rejecting provider
     // data) must not strand the incident in DIAGNOSING with lost evidence. Return it to OPEN
@@ -179,7 +190,7 @@ export const runRepair = createServerFn({ method: "POST" })
     try {
     const violations = inc.violations as unknown[];
     const base = { org_id: inc.org_id, incident_id: inc.id, created_by: context.userId };
-    let attempt = inc.attempts;
+    let attempt = claimed[0]!.attempts as number;
 
     // Clean contract: no code generation needed; proposal is the payload itself.
     if (violations.length === 0) {
@@ -195,7 +206,7 @@ export const runRepair = createServerFn({ method: "POST" })
     const { runInSandbox, createosConfig, SANDBOX_SHAPE, SANDBOX_EGRESS } = await import("@/lib/server/createos.server");
     let previousError: string | undefined;
     let lastRunId = "";
-    for (let g = 0; g <= MAX_GEN_RETRIES; g++) {
+    for (let g = 0; g <= MAX_GEN_RETRIES && attempt < MAX_ATTEMPTS_PER_INCIDENT; g++) {
       attempt++;
       const log: unknown[] = [];
       const ac = new AbortController();
@@ -286,33 +297,72 @@ export const decideApproval = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((d) => z.object({ approvalId: z.string().uuid(), decision: z.enum(["APPROVED", "REFUSED"]), note: z.string().max(500).optional() }).parse(d))
   .handler(async ({ data, context }) => {
-    const db = await admin();
-    const { data: ap } = await db.from("approvals").select("*, runs(incident_id)").eq("id", data.approvalId).single();
-    if (!ap) throw new Error("approval not found");
-    await assertOperator(context, ap.org_id);
-    if (ap.status !== "PENDING") throw new Error(`approval already ${ap.status}`);
-    await db.from("approvals").update({ status: data.decision, decided_by: context.userId, decided_at: new Date().toISOString(), note: data.note ?? null }).eq("id", ap.id);
-    const incidentId = (ap as any).runs.incident_id;
-    await db.from("incidents").update({ status: data.decision === "APPROVED" ? "READY_TO_WRITE" : "REFUSED" }).eq("id", incidentId);
-    await audit(ap.org_id, context.userId, `approval.${data.decision.toLowerCase()}`, { approval_id: ap.id, run_id: ap.run_id, code_hash: ap.code_hash });
+    // Single transactional RPC as the caller: role check, row locks, latest-proposal guard,
+    // approval + incident + audit updated together or not at all.
+    const { error } = await context.supabase.rpc("decide_approval", { _approval: data.approvalId, _decision: data.decision, _note: data.note ?? "" });
+    if (error) {
+      const msg = String(error.message ?? "");
+      if (/^(Blocked|Forbidden)|not found/i.test(msg)) throw new Error(msg);
+      throw new Error("Decision could not be stored; nothing was changed");
+    }
     return { ok: true };
   });
 
-/** Authorized write with idempotency + query-first reconciliation, then independent verification. */
+/**
+ * Authorized write with idempotency + query-first reconciliation, then independent verification.
+ * Fail-closed: only the latest executed proposal of a READY_TO_WRITE incident may write. RECONCILE
+ * re-queries first (writes only if nothing exists). VERIFIED is a read-only re-verification.
+ */
 export const commitAndVerify = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((d) => z.object({ runId: z.string().uuid() }).parse(d))
   .handler(async ({ data, context }) => {
     const db = await admin();
-    const { data: run } = await db.from("runs").select("*, incidents(id, status, event_id, inbound_events(payload, source, evidence_level))").eq("id", data.runId).single();
+    const { data: run, error: runErr } = await db.from("runs").select("*, incidents(id, org_id, status, event_id, inbound_events(payload, source, evidence_level, org_id))").eq("id", data.runId).maybeSingle();
+    if (runErr) throw new Error("Could not load run; nothing was written");
     if (!run) throw new Error("run not found");
     await assertOperator(context, run.org_id);
     const inc = (run as any).incidents;
-    const ev = inc.inbound_events;
-    if (!run.proposed_record || !run.policy) throw new Error("run has no proposal");
+    const ev = inc?.inbound_events;
+    if (!inc || !ev || ev.org_id !== run.org_id) throw new Error("Blocked: run/incident/event org mismatch");
+    const latest = await latestProposalRunId(db, inc.id);
+    const elig = commitEligibility(run as never, inc, latest);
+    if (!elig.ok) {
+      await audit(run.org_id, context.userId, "write.blocked", { run_id: run.id, incident_status: inc.status, reason: elig.reason });
+      throw new Error(`Blocked: ${elig.reason}`);
+    }
+    const parsed = NormalizedOrder.safeParse(run.proposed_record);
+    if (!parsed.success) throw new Error("Blocked: proposal does not satisfy the full normalized contract");
+    const order = parsed.data;
+    if (order.source !== ev.source) throw new Error("Blocked: proposal source differs from inbound event source");
+
+    const readBack = async () => {
+      const { data: rows, error } = await db.from("destination_records").select("*").eq("org_id", run.org_id).eq("source", order.source).eq("external_order_id", order.external_order_id);
+      if (error) throw new ReadbackError(error.message);
+      return rows ?? [];
+    };
+
+    if (elig.mode === "REVERIFY_ONLY") {
+      // No business write and historical receipts stay immutable. A failed re-check escalates.
+      let rows;
+      try { rows = await readBack(); } catch {
+        await audit(run.org_id, context.userId, "reverify.error", { run_id: run.id, incident_id: inc.id, note: "readback errored; durable state unknown, status not changed" });
+        throw new Error("Re-verify could not read the destination (alert recorded). Current VERIFIED status is unconfirmed; retry.");
+      }
+      const v = verifyDestination(order, rows as never);
+      const out = reverifyOutcome(v.result);
+      if (out.escalate) {
+        const { data: moved } = await db.from("incidents").update({ status: "RECONCILE", updated_at: new Date().toISOString() }).eq("id", inc.id).eq("status", "VERIFIED").select("id");
+        await audit(run.org_id, context.userId, "reverify.alert", { run_id: run.id, incident_id: inc.id, result: v.result, moved_to_reconcile: !!moved?.length });
+      } else {
+        await audit(run.org_id, context.userId, "reverify.confirmed", { run_id: run.id, result: v.result });
+      }
+      return { writeOutcome: "READ_ONLY_REVERIFY", result: v.result, alert: out.escalate, checks: JSON.parse(JSON.stringify(v.checks)) as { check: string; pass: boolean }[] };
+    }
 
     // Re-evaluate policy at write time (catalogue may have changed).
-    const { data: skus } = await db.from("known_skus").select("sku").eq("org_id", run.org_id);
+    const { data: skus, error: skuErr } = await db.from("known_skus").select("sku").eq("org_id", run.org_id);
+    if (skuErr) throw new Error("Could not load SKU catalogue; nothing was written");
     const policy = evaluatePolicy(run.proposed_record, ev.payload, ev.source, (skus ?? []).map((s: { sku: string }) => s.sku));
     if (!policy.allowed) {
       await audit(run.org_id, context.userId, "write.refused", { run_id: run.id, refusals: policy.refusals });
@@ -324,35 +374,57 @@ export const commitAndVerify = createServerFn({ method: "POST" })
       if (!ap || ap.proposal_hash !== proposalHash || ap.code_hash !== (run.code_hash ?? "no-code"))
         throw new Error("Human approval required (or approval does not match this exact code+proposal hash)");
     }
-    if (inc.status === "REFUSED") throw new Error("incident was refused");
 
-    const order = NormalizedOrder.parse(run.proposed_record);
-    const idem = await sha256Hex(`${run.org_id}|${order.source}|${order.external_order_id}`);
-    const readBack = async () =>
-      (await db.from("destination_records").select("*").eq("org_id", run.org_id).eq("source", order.source).eq("external_order_id", order.external_order_id)).data ?? [];
-
-    // Query first: handles retries, duplicates, and unknown prior outcomes.
-    let existing = await readBack();
-    let writeOutcome = "SKIPPED_EXISTS";
-    if (existing.length === 0) {
-      const { error } = await db.from("destination_records").insert({
-        org_id: run.org_id, ...order, idempotency_key: idem, run_id: run.id,
-        evidence_level: ev.evidence_level === "TEST_FIXTURE" ? "TEST_FIXTURE" : ev.evidence_level,
-      });
-      writeOutcome = error ? (error.code === "23505" ? "CONFLICT_DUPLICATE" : "UNKNOWN") : "INSERTED";
-      if (writeOutcome === "UNKNOWN") {
-        await db.from("incidents").update({ status: "RECONCILE" }).eq("id", inc.id);
-        await audit(run.org_id, context.userId, "write.unknown", { run_id: run.id, error: error?.message });
-      }
-      existing = await readBack();
+    // Write-ahead claim: READY_TO_WRITE -> RECONCILE atomically. A concurrent commit loses here,
+    // and a crash mid-write leaves the incident in RECONCILE (outcome unknown), never VERIFIED.
+    if (elig.mode === "WRITE") {
+      const { data: claimed, error: ce } = await db.from("incidents").update({ status: "RECONCILE", updated_at: new Date().toISOString() }).eq("id", inc.id).eq("status", "READY_TO_WRITE").select("id");
+      if (ce || !claimed?.length) throw new Error("Blocked: incident is no longer READY_TO_WRITE (concurrent commit?)");
     }
+
+    const idem = await sha256Hex(`${run.org_id}|${order.source}|${order.external_order_id}`);
+    let writeOutcome = "SKIPPED_EXISTS";
+    let existing: unknown[];
+    try {
+      existing = await readBack();
+      if (existing.length === 0) {
+        const { error } = await db.from("destination_records").insert({
+          org_id: run.org_id, ...order, idempotency_key: idem, run_id: run.id,
+          evidence_level: ev.evidence_level,
+        });
+        writeOutcome = error ? (error.code === "23505" ? "CONFLICT_DUPLICATE" : "UNKNOWN") : "INSERTED";
+        if (writeOutcome === "UNKNOWN") await audit(run.org_id, context.userId, "write.unknown", { run_id: run.id, error: error?.message?.slice(0, 200) });
+        existing = await readBack(); // deterministic re-read after insert, duplicate or unknown
+      }
+    } catch (e) {
+      const msg = e instanceof ReadbackError ? "destination readback failed" : "write path failed";
+      await audit(run.org_id, context.userId, "write.reconcile_required", { run_id: run.id, write_outcome: writeOutcome, error: msg });
+      throw new Error(`${msg}; incident left in RECONCILE. Nothing is marked VERIFIED. Use Re-query destination.`);
+    }
+
     // Independent verifier (separate module, reads durable state only).
     const v = verifyDestination(order, existing as never);
-    await db.from("verification_receipts").insert({ org_id: run.org_id, run_id: run.id, result: v.result, checks: { write_outcome: writeOutcome, idempotency_key: idem, checks: v.checks } as never, verifier_version: VERIFIER_VERSION, destination_record_id: v.record_id ?? null });
-    await db.from("incidents").update({ status: v.result === "VERIFIED" ? "VERIFIED" : "RECONCILE", updated_at: new Date().toISOString() }).eq("id", inc.id);
-    await audit(run.org_id, context.userId, "write.verified", { run_id: run.id, result: v.result, write_outcome: writeOutcome });
+    const { error: rcErr } = await db.from("verification_receipts").insert({ org_id: run.org_id, run_id: run.id, result: v.result, checks: { write_outcome: writeOutcome, idempotency_key: idem, checks: v.checks } as never, verifier_version: VERIFIER_VERSION, destination_record_id: v.record_id ?? null });
+    if (rcErr) {
+      await audit(run.org_id, context.userId, "write.receipt_failed", { run_id: run.id, write_outcome: writeOutcome });
+      throw new Error("Verification receipt could not be stored; incident left in RECONCILE (not VERIFIED). Retry Re-query destination.");
+    }
+    if (v.result === "VERIFIED") {
+      await db.from("incidents").update({ status: "VERIFIED", updated_at: new Date().toISOString() }).eq("id", inc.id).eq("status", "RECONCILE");
+    }
+    await audit(run.org_id, context.userId, verificationAuditAction(v.result), { run_id: run.id, result: v.result, write_outcome: writeOutcome });
     return { writeOutcome, result: v.result, checks: JSON.parse(JSON.stringify(v.checks)) as { check: string; pass: boolean }[] };
   });
+
+class ReadbackError extends Error {}
+
+/** Newest run of the incident that carries a proposal. Throws on query error (fail closed). */
+async function latestProposalRunId(db: any, incidentId: string): Promise<string | null> {
+  const { data, error } = await db.from("runs").select("id").eq("incident_id", incidentId).not("proposed_record", "is", null)
+    .order("attempt", { ascending: false }).order("created_at", { ascending: false }).limit(1);
+  if (error) throw new Error("Could not resolve latest proposal; nothing was changed");
+  return data?.[0]?.id ?? null;
+}
 
 export const providerStatus = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])

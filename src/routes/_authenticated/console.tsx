@@ -1,3 +1,4 @@
+import { canClaimRepair, blockedReason, statusGuidance } from "@/lib/domain/transitions";
 import { canRotateSecret } from "@/lib/domain/secret";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -56,7 +57,7 @@ function Console() {
 
   async function act<T>(label: string, fn: () => Promise<T>, ok?: (r: T) => string) {
     setBusy(label); setFlash(null);
-    try { const r = await fn(); if (ok) setFlash({ tone: "ok", text: ok(r) }); }
+    try { const r = await fn(); if (ok) { const text = ok(r); setFlash({ tone: text.startsWith("ALERT") ? "err" : "ok", text }); } }
     catch (e) { setFlash({ tone: "err", text: (e as Error).message }); }
     finally { setBusy(null); refresh(); }
   }
@@ -389,6 +390,7 @@ function Inspector({ d, inc, act, busy }: { d: Any; inc: Any; act: ActFn; busy: 
   const receipts = run ? d.receipts.filter((r: Any) => r.run_id === run.id) : [];
   const [note, setNote] = useState("");
   const terminal = ["VERIFIED", "REFUSED"].includes(inc.status);
+  const repairable = canClaimRepair(inc.status, inc.updated_at).ok;
 
   function download() {
     const blob = new Blob([JSON.stringify({ incident: inc, event: ev, run, approval, receipts, exported_at: new Date().toISOString() }, null, 2)], { type: "application/json" });
@@ -418,19 +420,26 @@ function Inspector({ d, inc, act, busy }: { d: Any; inc: Any; act: ActFn; busy: 
           </div>
           <pre className="code max-h-56 overflow-auto rounded-md bg-muted p-3">{JSON.stringify(ev?.payload, null, 2)}</pre>
         </div>
+        <p role="status" className="border-t border-border px-4 py-2 text-sm">
+          <span className="font-mono text-xs">{inc.status}</span> · {statusGuidance(inc.status)}
+          {!repairable && !terminal && <span className="block text-xs text-muted-foreground">Repair disabled: {blockedReason(inc.status)}</span>}
+        </p>
         <div className="flex flex-wrap gap-2 border-t border-border px-4 py-3">
-          <button className="btn-primary" disabled={terminal || !!busy}
+          <button className="btn-primary" disabled={!repairable || !!busy}
             onClick={() => act("run", () => fRun({ data: { incidentId: inc.id } }), (r) => `Run finished: ${r.outcome}`)}>
             {busy === "run" ? "Generating & executing in sandbox…" : (inc.violations as unknown[]).length ? (runs.length ? "Retry repair" : "Diagnose & repair") : "Propose as-is"}
           </button>
           {run?.proposed_record && run?.policy?.allowed && !terminal && (
             <button className="btn-ghost" disabled={!!busy || (run.policy.requires_approval && approval?.status !== "APPROVED")}
-              onClick={() => act("commit", () => fCommit({ data: { runId: run.id } }), (r) => `Write ${r.writeOutcome}; verifier: ${r.result}`)}>
+              onClick={() => act("commit", () => fCommit({ data: { runId: run.id } }), (r) => r.result === "VERIFIED" ? `Write ${r.writeOutcome}; verifier: VERIFIED` : `ALERT: write ${r.writeOutcome}; verifier ${r.result}; reconcile required`)}>
               {inc.status === "RECONCILE" ? "Reconcile & verify" : "Commit & verify"}
             </button>
           )}
+          {inc.status === "VERIFIED" && run?.proposed_record && (
+            <button className="btn-ghost" disabled={!!busy} onClick={() => act("commit", () => fCommit({ data: { runId: run.id } }), (r) => r.alert ? `ALERT: re-verify ${r.result}; incident moved to RECONCILE` : `Re-verify confirmed: ${r.result} (read-only)`)}>Re-verify (read-only)</button>
+          )}
           {inc.status === "RECONCILE" && run && (
-            <button className="btn-ghost" disabled={!!busy} onClick={() => act("commit", () => fCommit({ data: { runId: run.id } }), (r) => `Reconciled: ${r.result}`)}>Re-query destination</button>
+            <button className="btn-ghost" disabled={!!busy} onClick={() => act("commit", () => fCommit({ data: { runId: run.id } }), (r) => r.result === "VERIFIED" ? `Reconciled: VERIFIED` : `ALERT: still ${r.result}; reconcile required`)}>Re-query destination</button>
           )}
           {run && <button className="btn-ghost ml-auto" onClick={download}>Download receipt</button>}
         </div>
@@ -575,9 +584,14 @@ function Policy({ d, act, busy }: { d: Any; act: ActFn; busy: string | null }) {
         <div>
           <h3 className="font-semibold text-foreground">Known SKU catalogue</h3>
           <div className="mt-2 flex flex-wrap gap-1">{d.skus.length ? d.skus.map((s: string) => <span key={s} className="rounded-sm bg-muted px-1.5 py-0.5 font-mono text-[11px]">{s}</span>) : <span className="text-xs text-muted-foreground">Empty — every SKU will require approval.</span>}</div>
-          <form className="mt-2 flex gap-2" onSubmit={(e) => { e.preventDefault(); act("sku", async () => { await f({ data: { orgId: d.org, sku } }); setSku(""); }); }}>
-            <input aria-label="Add SKU" className="field font-mono" value={sku} onChange={(e) => setSku(e.target.value)} placeholder="TEE-BLK-M" required />
-            <button className="btn-ghost" disabled={busy === "sku"}>Add</button>
+          <form className="mt-2" onSubmit={(e) => { e.preventDefault(); act("sku", async () => { await f({ data: { orgId: d.org, sku } }); setSku(""); }); }}>
+            <label htmlFor="sku-add" className="block text-sm font-medium text-foreground">SKU to add</label>
+            <div className="mt-1 flex gap-2">
+              <input id="sku-add" aria-describedby="sku-help" className="field font-mono" value={sku} onChange={(e) => setSku(e.target.value)} placeholder="Type a SKU code" required />
+              <button className="btn-ghost shrink-0" disabled={busy === "sku"}>Add</button>
+            </div>
+            <p id="sku-help" className="mt-1 text-xs text-muted-foreground">For the current test fixture, type <span className="font-mono text-foreground">TEE-BLK-M</span>, then click Add. Example text is not a saved SKU.</p>
+            <button type="button" className="mt-1 text-xs text-muted-foreground underline underline-offset-2 hover:text-foreground" onClick={() => setSku("TEE-BLK-M")}>Use fixture SKU</button>
           </form>
         </div>
       </div>
