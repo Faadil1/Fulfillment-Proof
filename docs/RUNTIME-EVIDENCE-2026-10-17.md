@@ -98,3 +98,18 @@ A participant screen recording of the published authenticated control room was c
 - The local app-owned PostgreSQL table is currently the destination; it is **not evidence of an independently provisioned Stripe Projects database**. Stripe Projects remains `NOT_CONFIGURED`.
 
 Evidence boundary: generated-code tests and a production browser run were observed; no claim of general reliability, end-to-end real commerce fulfillment, or Stripe Projects provisioner compliance.
+
+## FIRST VERIFIED END-TO-END OUTCOME — PostgreSQL independently checked at 20:54 UTC (17 Oct 2026)
+
+The signed-in operator completed a human approval and `Commit & verify` for test order `shopx/ord_upb135`. Screenshot shows `VERIFIED`; this assistant independently read live Lovable Cloud PostgreSQL to corroborate the effect.
+
+- Incident `736c6140-35e4-4e98-a099-9cbeeda70d4a`: **VERIFIED**, 1 attempt, evidence `TEST_FIXTURE`.
+- AI-generated CreateOS run `bee55286-63a2-45f7-85ac-db8f0986dd65`: **GENERATED / SUCCEEDED**, exit 0, sandbox `sb-01m55t2svhvmbrn0s97xvz4dxm`, execution 83 ms, code SHA-256 prefix `766b6398`.
+- Human approval `4a2d5f9e-9a70-4cbf-8323-fad43701bfc6`: **APPROVED** at 20:54:04 UTC, reason `high-risk field currency changed ("usd" -> "USD")`.
+- Persisted destination row `0bd60f31-f5a1-4978-9e29-f846fdada921` created 20:54:13 UTC: `shopx/ord_upb135`, `42.00 USD`, `TEE-BLK-M`, quantity `2`, customer `cus_test_01`, `PENDING_FULFILLMENT`, `TEST_FIXTURE`.
+- Verifier receipt `3e38c85e-a507-4ce9-b03a-bc7dd8e502db` created at 20:54:14 UTC: **VERIFIED**, write outcome `INSERTED`, verifier `verifier-v1`, exactly **9/9 independent readback checks** passed (including unique count = 1). It references the persisted destination row and the exact AI run.
+- Global DB counts checked: 1 integration, 2 incidents, 1 agent run, **1 destination record, 1 verifier receipt** at time of audit.
+
+**Scope and limitations:** This is a real live CreateOS execution followed by human approval, an actual database write and independent database readback, using a deliberately authored `TEST_FIXTURE`. It is **not** a live Shopify transaction, a physical shipment, a Stripe payment or a Stripe Projects-provisioned external database. Stripe Projects gate remains **NOT_CONFIGURED**; cross-tenant authorization, duplicate attempts under concurrency, provider failure/recovery and deploy-from-GitHub parity require further tests.
+
+**Gateway transitions supported by evidence:** CreateOS Execution PROVEN, Agent Code Write/Run/Fix PROVEN for this case, Independent Destination Proof PROVEN in Lovable Cloud fixture destination, Human Approval PROVEN, Evidence Integrity PROVEN for honest fixture labeling. Product Live External Destination PARTIAL; Stripe Projects BLOCKED; Production Grade Reliability ACTIVE / unproven.
