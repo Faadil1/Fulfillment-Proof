@@ -73,6 +73,11 @@ describe("destination proof instead of exit code", () => {
       state: "VERIFIED", reason: "INDEPENDENT_READBACK_MATCH",
     });
   });
+  it("accepts database metadata that is not part of the canonical order contract", () => {
+    expect(verifyDestinationReadback(canonical, [{
+      id: "internal-db-pk-7", created_at: "2026-10-17T20:00:00Z", ...canonical,
+    }]).state).toBe("VERIFIED");
+  });
   it("does not claim VERIFIED on missing/failed readback", () => {
     expect(verifyDestinationReadback(canonical, null).state).toBe("UNKNOWN");
     expect(verifyDestinationReadback(canonical, []).state).toBe("UNKNOWN");
