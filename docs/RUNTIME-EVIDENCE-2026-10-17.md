@@ -58,3 +58,15 @@ After the project owner added `STRIPE_SECRET_KEY` through the secure Lovable Sec
 ## Source synchronization note
 
 The manually created public GitHub repository contains core backend, SQL migrations, routes, domain logic, and deployment configuration imported from Lovable. The UI primitives and binary assets are not yet fully mirrored and the GitHub checkout has not been proven build-identical to the published Lovable runtime. Do not report `GITHUB_SYNC_COMPLETE` until the actual checkout passes build and runtime checks.
+
+## Published operator provider checks persisted (20:26 UTC)
+
+With the participant signed into the published app, the provider-check action persisted these status rows to Lovable Cloud PostgreSQL on 17 October 2026, verified separately by querying the application's `provider_checks` table:
+
+- `createos`: `LIVE_OBSERVED`
+- `stripe`: `LIVE_TEST_MODE` (`GET /v1/account` success shown on the participant's screenshot)
+- `stripe_projects`: `NOT_CONFIGURED`
+
+This verifies the **published authenticated runtime's provider reachability**, not the full business transaction or Stripe Projects provisioning. The screenshot disclosed a Stripe account identifier and request identifier; these are intentionally not repeated here.
+
+An independent read-only database count at the same point showed one organization and zero integrations, inbound events, incidents, agent runs, approvals, destination records and verification receipts. The next required reality gate is an end-to-end authenticated `TEST_FIXTURE` incident with CreateOS execution, policy decision and independent destination readback.
