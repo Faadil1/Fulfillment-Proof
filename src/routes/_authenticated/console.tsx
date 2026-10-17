@@ -302,8 +302,14 @@ function Integrations({ d, act, busy }: { d: Any; act: ActFn; busy: string | nul
       </ul>
       {test && (
         <div className="border-t border-border px-4 py-3 text-xs">
-          <p>Signed request → <b className={test.signedStatus === 202 ? "text-primary" : "text-destructive"}>HTTP {test.signedStatus}</b>; unsigned request → <b className={test.unsignedStatus === 401 ? "text-primary" : "text-destructive"}>HTTP {test.unsignedStatus}</b> {test.unsignedStatus === 401 ? "(correctly rejected)" : ""}</p>
-          <p className="mt-1 text-muted-foreground">Recorded as a TEST_FIXTURE event (incident {test.signedBody?.incident_id?.slice(0, 8)}).</p>
+          <p className={`font-semibold ${test.pass ? "text-primary" : "text-destructive"}`}>{test.pass ? "Connection test passed" : "Connection test FAILED — see the observed results below"}</p>
+          <ul className="mt-1 space-y-0.5">
+            <li>1. Signed request → <b className={test.signedOk ? "text-primary" : "text-destructive"}>HTTP {test.signedStatus || "network error"}</b> {test.signedOk && "(accepted, new event)"}</li>
+            <li>2. Exact same signed request replayed → <b className={test.replayOk ? "text-primary" : "text-destructive"}>HTTP {test.replayStatus || "network error"}</b> duplicate={String(test.replayBody?.duplicate)}; same event &amp; incident: <b className={test.identityMatch ? "text-primary" : "text-destructive"}>{test.identityMatch ? "yes" : "no"}</b></li>
+            <li>3. Unsigned request → <b className={test.unsignedRejected ? "text-primary" : "text-destructive"}>HTTP {test.unsignedStatus || "network error"}</b> {test.unsignedRejected && "(correctly rejected)"}</li>
+            <li>Stored duplicate count on the event: <b className={test.persistedOk ? "text-primary" : "text-destructive"}>{test.persistedDuplicateCount ?? "not readable"}</b>{test.persistedOk && ` — duplicate suppressed ${test.persistedDuplicateCount}`}</li>
+          </ul>
+          <p className="mt-1 text-muted-foreground">Recorded as a TEST_FIXTURE event (incident {test.signedBody?.incident_id?.slice(0, 8) ?? "none"}), not a production order.</p>
         </div>
       )}
       {secret && (
@@ -352,15 +358,29 @@ function Fixture({ d, act, busy }: { d: Any; act: ActFn; busy: string | null }) 
 }
 
 function Events({ d }: { d: Any }) {
+  // Derived only from stored rows (duplicate_count / conflicts_with_event_id), never constants.
+  const suppressed = d.events.reduce((n: number, e: Any) => n + (e.duplicate_count ?? 0), 0);
+  const conflicts = d.events.filter((e: Any) => e.conflicts_with_event_id);
   return (
     <section className="panel" aria-labelledby="ev">
-      <div className="panel-head"><h2 id="ev" className="panel-title">Inbound events</h2></div>
+      <div className="panel-head">
+        <h2 id="ev" className="panel-title">Inbound events</h2>
+        {suppressed > 0 && <span className="font-mono text-xs text-muted-foreground">{suppressed} duplicate {suppressed === 1 ? "delivery" : "deliveries"} suppressed</span>}
+      </div>
+      {conflicts.length > 0 && (
+        <div role="alert" className="border-b border-border bg-destructive/10 px-4 py-2 text-xs text-destructive">
+          Conflicting payloads: {conflicts.length} event{conflicts.length === 1 ? "" : "s"} reuse an order id with a different body
+          ({[...new Set(conflicts.map((e: Any) => `${e.source}/${e.external_order_id}`))].join(", ")}). Each is kept as its own incident; review before committing — the destination accepts only one record per order id.
+        </div>
+      )}
       {d.events.length === 0 ? <Empty>Nothing received yet.</Empty> : (
         <ul className="max-h-72 divide-y divide-border overflow-auto text-xs">
           {d.events.map((e: Any) => (
             <li key={e.id} className="flex items-center gap-2 px-4 py-2">
               <Evidence level={e.evidence_level} />
               <span className="truncate font-mono">{e.source}/{e.external_order_id ?? "?"}</span>
+              {e.conflicts_with_event_id && <span className="rounded-sm border border-destructive px-1 text-destructive">conflict</span>}
+              {e.duplicate_count > 0 && <span className="text-muted-foreground">+{e.duplicate_count} retries</span>}
               <span className={`ml-auto ${e.contract_ok ? "text-primary" : "text-destructive"}`}>{e.contract_ok ? "contract ok" : "drift"}</span>
               <span className="text-muted-foreground">{e.signature_verified ? "signed" : "unsigned"}</span>
             </li>

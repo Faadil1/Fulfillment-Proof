@@ -108,15 +108,35 @@ export const testIntegration = createServerFn({ method: "POST" })
     });
     const origin = new URL(getRequest().url).origin;
     const url = `${origin}/api/public/ingest/${integ.id}`;
-    const signed = await fetch(url, {
-      method: "POST",
-      headers: { "content-type": "application/json", "x-fp-signature": await signBody(sec!.secret, body), "x-fp-evidence": "TEST_FIXTURE" },
-      body,
+    // Sign ONCE; send the exact same body + signature header twice to prove at-least-once dedup.
+    const headers = { "content-type": "application/json", "x-fp-signature": await signBody(sec!.secret, body), "x-fp-evidence": "TEST_FIXTURE" };
+    const post = async (h: Record<string, string>) => {
+      try {
+        const res = await fetch(url, { method: "POST", headers: h, body });
+        return { status: res.status, body: ((await res.json().catch(() => ({}))) ?? {}) as Record<string, unknown> };
+      } catch {
+        return { status: 0, body: {} as Record<string, unknown> }; // network failure: never a pass
+      }
+    };
+    const signed = await post(headers);
+    const replay = await post(headers);
+    const unsigned = await post({ "content-type": "application/json" });
+    let persistedDuplicateCount: number | null = null;
+    if (typeof signed.body["event_id"] === "string") {
+      const { data: evRow } = await db.from("inbound_events").select("duplicate_count, org_id").eq("id", signed.body["event_id"] as string).maybeSingle();
+      if (evRow && evRow.org_id === integ.org_id) persistedDuplicateCount = evRow.duplicate_count;
+    }
+    const { evaluateConnectionTest } = await import("@/lib/domain/connection-test");
+    const grade = evaluateConnectionTest(signed, replay, unsigned, persistedDuplicateCount);
+    await audit(integ.org_id, context.userId, "integration.tested", {
+      signed: signed.status, replay: replay.status, replay_duplicate: replay.body["duplicate"] === true,
+      identity_match: grade.identityMatch, unsigned: unsigned.status, persisted_duplicate_count: persistedDuplicateCount, pass: grade.pass,
     });
-    const signedJson = await signed.json().catch(() => ({}));
-    const unsigned = await fetch(url, { method: "POST", headers: { "content-type": "application/json" }, body });
-    await audit(integ.org_id, context.userId, "integration.tested", { signed: signed.status, unsigned_rejected: unsigned.status === 401 });
-    return { url, signedStatus: signed.status, signedBody: signedJson, unsignedStatus: unsigned.status };
+    const pick = (b: Record<string, unknown>) => ({ event_id: (b["event_id"] as string) ?? null, incident_id: (b["incident_id"] as string) ?? null, duplicate: b["duplicate"] === true });
+    return {
+      url, signedStatus: signed.status, signedBody: pick(signed.body), replayStatus: replay.status, replayBody: pick(replay.body),
+      unsignedStatus: unsigned.status, persistedDuplicateCount, ...grade,
+    };
   });
 
 export const submitFixture = createServerFn({ method: "POST" })
