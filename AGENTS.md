@@ -14,3 +14,4 @@
 - Pure domain logic (contract, policy, verifier, HMAC) lives in `src/lib/domain/` with tests; the verifier must not import generator/executor code. Why: independent verification.
 - Generated code is never evaluated on the server; it executes only via `src/lib/server/createos.server.ts`. No local fallback. Why: honesty + isolation.
 - Evidence levels shown in UI must derive from stored rows/network results, never constants. Why: no fake statuses.
+- Multi-row state transitions that must be atomic (e.g. approval decision + incident status + audit) use a SECURITY DEFINER SQL function called as the caller, with row locks and its own role check. Why: separate PostgREST updates can leave partial state.
