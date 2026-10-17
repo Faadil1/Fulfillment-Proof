@@ -33,3 +33,6 @@ tmp/
 .temp/
 *.sqlite
 *.sqlite-journal
+
+# Stripe Projects local-only credentials/state
+.projects/state.local.json
