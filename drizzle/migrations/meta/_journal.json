@@ -22,6 +22,20 @@
       "when": 1792275385531,
       "tag": "0002_decide_approval_rpc_and_integrity",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1792275634534,
+      "tag": "0003_signed_ingest_dedup",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1792275815263,
+      "tag": "0004_ingest_order_lock",
+      "breakpoints": true
     }
   ]
 }
