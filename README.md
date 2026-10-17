@@ -38,6 +38,8 @@ Docs: https://createos.sh/docs/Sandbox/Overview/
 **Stripe Projects**: real provisioned service proven by Stripe CLI status and standalone provider sandbox execution; integration of this new credential into the published app's business loop is not yet proven.
 Docs: https://docs.stripe.com/projects and https://projects.dev/hackathon-participants
 
+Stripe Projects stack share: https://projects.dev/s#v1:createos~project (composition link, not proof of credentials inside the published Lovable runtime).
+
 CreateOS EU API address provided by organizers: https://api-eu.sb.createos.sh/
 
 **Observed evidence:** CreateOS-generated-code sandbox `sb-01m55t2svhvmbrn0s97xvz4dxm` exited 0 with four generated tests passing. The approved `TEST_FIXTURE` order `shopx/ord_upb135` produced one persisted destination record and verifier-v1 `VERIFIED` receipt (9/9). Stripe Projects `fulfillment-proof` (`project_61Vb3Gboaa5JldL2X16UgpHD1CA8XdO7YS7VU5JA8L4S`) linked `createos/project` (Free) and provisioned a new CreateOS account; its CLI created/executed/destroyed sandbox `sb-01m55xmmmemdh0yt5y0v9j65ta` without public ingress. [Complete evidence & truth boundaries](docs/RUNTIME-EVIDENCE-2026-10-17.md). The published app currently retains its preexisting sandbox key and has **not** been rebound to Stripe Projects' new credentials.
