@@ -7,6 +7,7 @@ import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { sha256Hex, stableStringify, NormalizedOrder } from "@/lib/domain/contract";
 import { evaluatePolicy, type PolicyDecision } from "@/lib/domain/policy";
 import { verifyDestination, VERIFIER_VERSION } from "@/lib/domain/verifier";
+import { generateSigningSecret, secretHint } from "@/lib/domain/secret";
 
 const MAX_ATTEMPTS_PER_INCIDENT = 6;
 const MAX_GEN_RETRIES = 2;
@@ -55,6 +56,31 @@ export const createIntegration = createServerFn({ method: "POST" })
     await audit(data.orgId, context.userId, "integration.created", { integration_id: integ.id, source: data.source });
     // Secret is returned exactly once and never readable again from the client.
     return { integrationId: integ.id, secret };
+  });
+
+/**
+ * Owner-only rotation. Generates the new secret server-side and swaps it atomically via the
+ * rotate_integration_secret SQL function (runs as the caller; it re-checks owner role, updates
+ * secret + hint and writes an audit row with the hint only, all in one transaction).
+ * The old secret is never read. The new one is returned exactly once.
+ */
+export const rotateIntegrationSecret = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d) => z.object({ integrationId: z.string().uuid() }).parse(d))
+  .handler(async ({ data, context }) => {
+    const secret = generateSigningSecret();
+    const { error } = await context.supabase.rpc("rotate_integration_secret", {
+      _integration: data.integrationId,
+      _secret: secret,
+      _hint: secretHint(secret),
+    });
+    if (error) {
+      const msg = String(error.message ?? "");
+      if (/owner role required/i.test(msg)) throw new Error("Forbidden: only organization owners can rotate secrets");
+      if (/not found/i.test(msg)) throw new Error("Integration not found");
+      throw new Error("Rotation failed; the existing secret is unchanged");
+    }
+    return { integrationId: data.integrationId, secret };
   });
 
 /** Real network round-trip: server signs a TEST_FIXTURE and POSTs it to this app's public endpoint. */

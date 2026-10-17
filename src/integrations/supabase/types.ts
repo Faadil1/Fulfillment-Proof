@@ -592,6 +592,10 @@ export type Database = {
       can_operate: { Args: { _org: string }; Returns: boolean }
       create_organization: { Args: { _name: string }; Returns: string }
       is_member: { Args: { _org: string }; Returns: boolean }
+      rotate_integration_secret: {
+        Args: { _hint: string; _integration: string; _secret: string }
+        Returns: undefined
+      }
     }
     Enums: {
       org_role: "owner" | "operator" | "viewer"

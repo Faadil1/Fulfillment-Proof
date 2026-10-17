@@ -1,3 +1,4 @@
+import { canRotateSecret } from "@/lib/domain/secret";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
@@ -5,7 +6,7 @@ import { useMemo, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { Evidence, Status, Empty } from "@/components/Evidence";
 import {
-  createOrganization, createIntegration, testIntegration, submitFixture, addSku,
+  createOrganization, createIntegration, rotateIntegrationSecret, testIntegration, submitFixture, addSku,
   runRepair, decideApproval, commitAndVerify, providerStatus,
 } from "@/lib/ops.functions";
 
@@ -253,9 +254,13 @@ function Providers({ orgId, checks, act, busy }: { orgId: string; checks: Any[];
 function Integrations({ d, act, busy }: { d: Any; act: ActFn; busy: string | null }) {
   const fCreate = useServerFn(createIntegration);
   const fTest = useServerFn(testIntegration);
+  const fRotate = useServerFn(rotateIntegrationSecret);
+  const isOwner = canRotateSecret(d.role);
   const [name, setName] = useState("");
   const [source, setSource] = useState("");
-  const [secret, setSecret] = useState<{ id: string; secret: string } | null>(null);
+  const [secret, setSecret] = useState<{ id: string; secret: string; rotated?: boolean } | null>(null);
+  const [copied, setCopied] = useState(false);
+  const [confirmRotate, setConfirmRotate] = useState<string | null>(null);
   const [test, setTest] = useState<Any | null>(null);
   return (
     <section className="panel" aria-labelledby="integ">
@@ -264,12 +269,33 @@ function Integrations({ d, act, busy }: { d: Any; act: ActFn; busy: string | nul
       <ul className="divide-y divide-border">
         {d.integrations.map((i: Any) => (
           <li key={i.id} className="px-4 py-3 text-sm">
-            <div className="flex items-center justify-between gap-2">
+            <div className="flex flex-wrap items-center justify-between gap-2">
               <span><b className="font-medium">{i.name}</b> <span className="font-mono text-xs text-muted-foreground">{i.source}</span></span>
-              <button className="btn-ghost text-xs" disabled={busy === "test" + i.id}
-                onClick={() => act("test" + i.id, async () => setTest(await fTest({ data: { integrationId: i.id } })))}>Test connection</button>
+              <span className="flex gap-1">
+                <button className="btn-ghost text-xs" disabled={busy === "test" + i.id}
+                  onClick={() => act("test" + i.id, async () => setTest(await fTest({ data: { integrationId: i.id } })))}>Test connection</button>
+                {isOwner && (
+                  <button className="btn-ghost text-xs text-destructive" disabled={busy === "rot" + i.id}
+                    onClick={() => setConfirmRotate(i.id)}>Rotate signing secret</button>
+                )}
+              </span>
             </div>
             <p className="mt-1 break-all font-mono text-[11px] text-muted-foreground">POST /api/public/ingest/{i.id} · secret …{i.secret_hint} · last signed event {i.last_verified_at ? new Date(i.last_verified_at).toLocaleString() : "never"}</p>
+            {confirmRotate === i.id && (
+              <div role="alertdialog" aria-label="Confirm secret rotation" className="mt-2 rounded border border-destructive/40 bg-accent p-3 text-xs">
+                <p className="font-medium">Rotate the signing secret for {i.name}?</p>
+                <p className="mt-1 text-muted-foreground">The current secret stops working immediately. Any external sender using it will be rejected until you reconfigure it with the new secret. Event history and incidents are kept.</p>
+                <div className="mt-2 flex gap-2">
+                  <button className="btn-primary text-xs" disabled={busy === "rot" + i.id}
+                    onClick={() => act("rot" + i.id, async () => {
+                      const r = await fRotate({ data: { integrationId: i.id } });
+                      setConfirmRotate(null); setCopied(false);
+                      setSecret({ id: r.integrationId, secret: r.secret, rotated: true });
+                    })}>Rotate now</button>
+                  <button className="btn-ghost text-xs" onClick={() => setConfirmRotate(null)}>Cancel</button>
+                </div>
+              </div>
+            )}
           </li>
         ))}
       </ul>
@@ -281,9 +307,12 @@ function Integrations({ d, act, busy }: { d: Any; act: ActFn; busy: string | nul
       )}
       {secret && (
         <div className="border-t border-border bg-accent px-4 py-3 text-xs">
-          <p className="font-medium">Signing secret — shown once, copy it now:</p>
+          <p className="font-medium">{secret.rotated ? "New signing secret (old one is now invalid)" : "Signing secret"} — shown once, copy it now:</p>
           <code className="code mt-1 block break-all">{secret.secret}</code>
-          <button className="btn-ghost mt-2 text-xs" onClick={() => setSecret(null)}>I've stored it</button>
+          <div className="mt-2 flex gap-2">
+            <button className="btn-ghost text-xs" onClick={() => { void navigator.clipboard?.writeText(secret.secret).then(() => setCopied(true)); }}>{copied ? "Copied" : "Copy"}</button>
+            <button className="btn-ghost text-xs" onClick={() => { setSecret(null); setCopied(false); }}>I've saved it</button>
+          </div>
         </div>
       )}
       <form className="grid grid-cols-2 gap-2 border-t border-border px-4 py-3"
