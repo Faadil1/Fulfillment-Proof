@@ -2,7 +2,7 @@
 
 **Build Agents That Run Code — CreateOS × Stripe Projects Hackathon (17 October 2026)**
 
-> **Status: BUILD IN PROGRESS — CreateOS Sandbox smoke-test confirmed.** This public repository is the submission source of truth. A live CreateOS sandbox ran real code, but the full business recovery and Stripe Projects provisioning remain unproven.
+> **Status: LIVE TEST-FIXTURE LOOP VERIFIED (17 Oct 2026).** A generated JavaScript transform executed in a real CreateOS sandbox; an operator approved its proposal, a destination record was inserted, and an independent verifier issued a 9/9 VERIFIED receipt. Separately, Stripe Projects provisioned a CreateOS free service and its CLI successfully created, executed and destroyed a sandbox. Direct binding of that newly provisioned credential to the published Lovable application has not been proven.
 
 ## Problem
 
@@ -35,12 +35,12 @@ Fulfillment Proof is an AI-native, **outcome-gated integration recovery** operat
 **CreateOS Sandbox**: actual sandbox ID, code generated and run, captured stdout/stderr/exit code, enforced network rule, and cleanup; pause/fork optional if genuinely supported by quota.
 Docs: https://createos.sh/docs/Sandbox/Overview/
 
-**Stripe Projects**: real provisioned service and credentials used in the application core loop, not a screenshot-only setup step.
+**Stripe Projects**: real provisioned service proven by Stripe CLI status and standalone provider sandbox execution; integration of this new credential into the published app's business loop is not yet proven.
 Docs: https://docs.stripe.com/projects and https://projects.dev/hackathon-participants
 
 CreateOS EU API address provided by organizers: https://api-eu.sb.createos.sh/
 
-**Sponsor provisioning, credentials, and run results have not yet been verified in this conversation.**
+**Observed evidence:** CreateOS-generated-code sandbox `sb-01m55t2svhvmbrn0s97xvz4dxm` exited 0 with four generated tests passing. The approved `TEST_FIXTURE` order `shopx/ord_upb135` produced one persisted destination record and verifier-v1 `VERIFIED` receipt (9/9). Stripe Projects `fulfillment-proof` (`project_61Vb3Gboaa5JldL2X16UgpHD1CA8XdO7YS7VU5JA8L4S`) linked `createos/project` (Free) and provisioned a new CreateOS account; its CLI created/executed/destroyed sandbox `sb-01m55xmmmemdh0yt5y0v9j65ta` without public ingress. [Complete evidence & truth boundaries](docs/RUNTIME-EVIDENCE-2026-10-17.md). The published app currently retains its preexisting sandbox key and has **not** been rebound to Stripe Projects' new credentials.
 
 ## Development
 
@@ -53,13 +53,14 @@ See the [2–3 minute judge video shotlist](docs/JUDGE-DEMO-2-5-MINUTES.md), exp
 - [x] Non-secret text source mirrored from Lovable to GitHub (binary assets omitted; fresh checkout build still pending)
 - [ ] GitHub checkout reproducibly builds
 - [ ] Authentication, database, security and RLS verified
-- [ ] Stripe Projects provisioner proof
-- [x] CreateOS real sandbox execution smoke-test, code run and constrained egress (NOT full AI repair proof)
-- [ ] End-to-end AI generated/repaired code → real operator business outcome
-- [ ] Authorized write + independent destination readback
+- [x] Stripe Projects linked provider + provisioned free CreateOS service + CreateOS CLI sandbox create/exec/destroy independently proven
+- [ ] Published Lovable app re-tested using Stripe Projects-provisioned identity
+- [x] CreateOS Sandbox real AI-generated repair-code execution (exit 0, 4/4 generated tests, restricted egress)
+- [x] TEST_FIXTURE AI-generated code → independently authorized persistent destination effect
+- [x] Human-approved idempotent write and 9/9 independent destination readback receipt
 - [ ] Negative/refusal and idempotency recovery tests
-- [ ] Public runtime tested and accessible
-- [ ] README updated with exact functionality/limitations
+- [x] Public Lovable runtime tested by authenticated operator; console requires login
+- [x] README updated with exact functionality and outstanding limitations
 - [ ] 2–3 minute public YouTube video with team member on camera
 - [ ] Public X or LinkedIn post
 - [ ] Projects leaderboard submission with code CreateOS-2026
