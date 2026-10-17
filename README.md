@@ -44,11 +44,12 @@ CreateOS EU API address provided by organizers: https://api-eu.sb.createos.sh/
 
 ## Development
 
-Core application source, PostgreSQL migration, backend modules, auth routes, incident UI, TypeScript tooling and Bun lockfile have been transferred from the Lovable project. See [implementation guide](docs/IMPLEMENTATION.md) and [runtime evidence log](docs/RUNTIME-EVIDENCE-2026-10-17.md). The default UI component library and binary favicon are not yet fully mirrored. The published Lovable app remains the runtime target; do not claim GitHub runtime parity before building and testing this repository. Avoid GitHub Actions due to unavailable Actions budget.
+All currently enumerated non-secret text source files from Lovable have now been mirrored to this public repository, including the full reusable UI components, routes, server functions, database migrations, TypeScript/Vite configuration, and Bun lockfile. Excluded intentionally: private `.env` and Lovable project metadata; binary assets `home.png` and `public/favicon.ico` are not mirrored. See [implementation guide](docs/IMPLEMENTATION.md) and [runtime evidence log](docs/RUNTIME-EVIDENCE-2026-10-17.md). The published Lovable app remains the tested runtime target; the GitHub checkout has **not** independently passed a fresh build/deployment check. Avoid GitHub Actions due to unavailable Actions budget.
 
 ## Submission checklist (not yet achieved)
 
-- [ ] Application source synchronized and reviewed
+- [x] Non-secret text source mirrored from Lovable to GitHub (binary assets omitted; fresh checkout build still pending)
+- [ ] GitHub checkout reproducibly builds
 - [ ] Authentication, database, security and RLS verified
 - [ ] Stripe Projects provisioner proof
 - [x] CreateOS real sandbox execution smoke-test, code run and constrained egress (NOT full AI repair proof)
