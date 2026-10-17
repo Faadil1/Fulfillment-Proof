@@ -14,9 +14,21 @@ This document captures the first observed CreateOS integration smoke tests execu
 
 **Evidence boundary:** these observations are based on the development agent's executed provider calls, not an independently authenticated production operator incident run. No owner-paid/production shipment or payment occurred.
 
+## Published operator runtime — observed from participant recording
+
+The participant supplied a 20.8-second screen recording of the **published** https://fulfillment-proof.lovable.app/console operator UI on 17 October 2026. After creating organization `Test`, they clicked `Run live check`, and the visible provider statuses became:
+
+- **CreateOS Sandbox:** `LIVE_OBSERVED` — endpoint `https://api-eu.sb.createos.sh` shown.
+- **AI generation:** `CONFIGURED` — this is a configuration status, NOT yet proof of an AI generation run on a real incident.
+- **Stripe (via Stripe Projects):** `NOT_CONFIGURED` — no evidence of Stripe Projects provisioning. A separate Stripe test-mode dashboard screenshot only confirms access to Stripe Sandbox; it does not close the Projects gate.
+- **Incidents / approvals / reconciliation / verified receipts:** all **0**. No integration or destination record exists yet in the shown workspace.
+- A public landing and authenticated operator console visibly rendered without a blank page.
+
+This extends provider-check observation to the published runtime. It **does not** prove the full repair-and-verification loop, vendor compliance or a production order outcome.
+
 ## Still unproven
 
-- The **published** site's CreateOS key must be checked after the redeployment (preview secret visibility is not identical to active public runtime).
+- The **published** site's CreateOS key check is now visibly confirmed by the participant's live console recording. Re-run it after later redeploys.
 - Real end-to-end: authenticated user → incident → AI-generated repair → CreateOS → approval → persisted destination → independent verifier receipt. **NOT YET RUN.**
 - Stripe Projects CLI provisioning and downstream resource use: **NOT_CONFIGURED**.
 - Fork, pause/resume and desktop: **NOT_IMPLEMENTED**; no claim to have used them.
