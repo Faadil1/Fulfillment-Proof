@@ -591,6 +591,10 @@ export type Database = {
     Functions: {
       can_operate: { Args: { _org: string }; Returns: boolean }
       create_organization: { Args: { _name: string }; Returns: string }
+      decide_approval: {
+        Args: { _approval: string; _decision: string; _note: string }
+        Returns: undefined
+      }
       is_member: { Args: { _org: string }; Returns: boolean }
       rotate_integration_secret: {
         Args: { _hint: string; _integration: string; _secret: string }
