@@ -82,3 +82,19 @@ On 17 Oct 2026, the authenticated operator triggered `Diagnose & repair` for a `
 **Recovery verified independently:** Only incident `736c6140-35e4-4e98-a099-9cbeeda70d4a` was conditionally reset from `DIAGNOSING` to `OPEN`, while retaining `attempts=0`; an `incident.recovered_after_exec_ms_serialization_failure` audit event exists. No evidence of successful business repair from the failed attempt survives, so it is **UNKNOWN** rather than success. App redeploy was initiated, but full production retry had not yet been observed at this audit point.
 
 Code sync commit: `e048a5b21cc6d05668c12945c00c47f342986d4c`.
+
+## First AI-generated CreateOS repair — approved only by evidence gate pending (20:50:34 UTC)
+
+A participant screen recording of the published authenticated control room was cross-checked against live PostgreSQL tables `incidents`, `runs`, `approvals`, `destination_records` and `verification_receipts`.
+
+- Input: `TEST_FIXTURE` order `ord_upb135`, source `shopx`, six contract violations; **not a live merchant order**.
+- Actual AI generation: `runs.generation_status=GENERATED`, model gateway run recorded; agent-written `transform(input)` saved with SHA-256 code hash `766b6398e611a4604b565fd2341924965f4c1ab27f612e621d3d54bede5dfde`.
+- Actual CreateOS execution: `runs.execution_status=SUCCEEDED`, sandbox `sb-01m55t2svhvmbrn0s97xvz4dxm`, `s-1vcpu-1gb`, constrained egress `127.0.0.1:9`, exit code `0`, duration `83` ms, empty stderr.
+- Generated transformation returned canonical order: `shopx/ord_upb135`, currency `USD` normalized from `usd`, amount `4200` cents, `TEE-BLK-M`, quantity `2`, `cus_test_01`.
+- Four **generated** tests executed in sandbox and reported passing: drifted sample, decimal major-unit / string-quantity, rejection of fractional quantity, rejection of inconsistent totals.
+- Independent policy evaluated the proposal and returned `allowed=true; requires_approval=true` because a currency field was changed. `incidents.status=AWAITING_APPROVAL`. The approval proposal is bound to the recorded code hash and proposal hash. Approval row status `PENDING`.
+- At this verification, there were **zero destination records and zero verification receipts**. **A successful CreateOS code run is not a verified business effect.** No Stripe live payments, shipments or external destination effects are demonstrated.
+- Next required operator action: review the exact proposal and explicitly approve or refuse the `TEST_FIXTURE` change. Only after separate `Commit & verify` should the control plane write to the app's own `destination_records` table and independently read it back. Re-check evidence before promoting `VERIFIED`.
+- The local app-owned PostgreSQL table is currently the destination; it is **not evidence of an independently provisioned Stripe Projects database**. Stripe Projects remains `NOT_CONFIGURED`.
+
+Evidence boundary: generated-code tests and a production browser run were observed; no claim of general reliability, end-to-end real commerce fulfillment, or Stripe Projects provisioner compliance.
