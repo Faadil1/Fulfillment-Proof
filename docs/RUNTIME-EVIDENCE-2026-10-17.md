@@ -43,3 +43,18 @@ This extends provider-check observation to the published runtime. It **does not*
 4. Generate code through AI, execute in CreateOS with actual sandbox ID and stdout/stderr/exit code.
 5. Verify refusal path for unknown SKU / high amount, approval binding, authorized write, idempotent retry and independent destination readback receipt.
 6. Provision a real service with Stripe Projects, consume its credentials securely and record actual provider receipt.
+
+## Stripe test-mode key validation (development server)
+
+After the project owner added `STRIPE_SECRET_KEY` through the secure Lovable Secrets UI, the Lovable development agent executed a **read-only** request `GET https://api.stripe.com/v1/account` with the configured key on 17 October 2026.
+
+- API returned HTTP **200** with a Stripe request ID (redacted, not recorded in public GitHub).
+- Key classification was **LIVE_TEST_MODE**, not production.
+- No Stripe objects were created or mutated; no API key value was shown.
+- At the time of inspection, the most recent persisted production `provider_checks` had CreateOS **LIVE_OBSERVED** and Stripe **NOT_CONFIGURED**, before the new key was added.
+- After deploying the new secret, an authenticated user must run **Run live check** on the *published app* to store and verify the current production status.
+- **Stripe Projects CLI provisioning is NOT proven** by this Stripe test-mode API call; independent Stripe Projects `status` and resource evidence are still required.
+
+## Source synchronization note
+
+The manually created public GitHub repository contains core backend, SQL migrations, routes, domain logic, and deployment configuration imported from Lovable. The UI primitives and binary assets are not yet fully mirrored and the GitHub checkout has not been proven build-identical to the published Lovable runtime. Do not report `GITHUB_SYNC_COMPLETE` until the actual checkout passes build and runtime checks.
