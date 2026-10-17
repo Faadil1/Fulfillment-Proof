@@ -174,11 +174,15 @@ export type Database = {
       }
       inbound_events: {
         Row: {
+          body_sha256: string | null
+          conflicts_with_event_id: string | null
           contract_ok: boolean
+          duplicate_count: number
           evidence_level: string
           external_order_id: string | null
           id: string
           integration_id: string | null
+          last_duplicate_at: string | null
           org_id: string
           payload: Json
           received_at: string
@@ -187,11 +191,15 @@ export type Database = {
           violations: Json
         }
         Insert: {
+          body_sha256?: string | null
+          conflicts_with_event_id?: string | null
           contract_ok: boolean
+          duplicate_count?: number
           evidence_level: string
           external_order_id?: string | null
           id?: string
           integration_id?: string | null
+          last_duplicate_at?: string | null
           org_id: string
           payload: Json
           received_at?: string
@@ -200,11 +208,15 @@ export type Database = {
           violations?: Json
         }
         Update: {
+          body_sha256?: string | null
+          conflicts_with_event_id?: string | null
           contract_ok?: boolean
+          duplicate_count?: number
           evidence_level?: string
           external_order_id?: string | null
           id?: string
           integration_id?: string | null
+          last_duplicate_at?: string | null
           org_id?: string
           payload?: Json
           received_at?: string
@@ -213,6 +225,13 @@ export type Database = {
           violations?: Json
         }
         Relationships: [
+          {
+            foreignKeyName: "inbound_events_conflicts_with_event_id_fkey"
+            columns: ["conflicts_with_event_id"]
+            isOneToOne: false
+            referencedRelation: "inbound_events"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "inbound_events_integration_id_fkey"
             columns: ["integration_id"]
@@ -594,6 +613,20 @@ export type Database = {
       decide_approval: {
         Args: { _approval: string; _decision: string; _note: string }
         Returns: undefined
+      }
+      ingest_signed_event: {
+        Args: {
+          _body_sha256: string
+          _contract_ok: boolean
+          _evidence: string
+          _external_order_id: string
+          _integration: string
+          _org: string
+          _payload: Json
+          _source: string
+          _violations: Json
+        }
+        Returns: Json
       }
       is_member: { Args: { _org: string }; Returns: boolean }
       rotate_integration_secret: {
