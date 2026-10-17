@@ -146,3 +146,18 @@ A subsequent `stripe projects status` output independently confirms project `ful
 The operator installed the official `createos` CLI release `v0.0.31` in their GitHub Codespace. The installer verified its checksum. Running `createos whoami` from the directory containing Stripe Projects-synced `.env` succeeded for the CreateOS user associated with the provider account, showing `Plan free-plan` and account creation dated 17 Oct 2026. `createos projects list` returned **"You don't have any projects yet."** This is not a Stripe Projects provisioning error: Stripe Projects `createos/project` creates the CreateOS account/resource/credentials, while an actual deployable application project is a separate explicit CreateOS project (`createos projects add`). Do not fabricate a deployed CreateOS project or conflate this CLI success with published Lovable use of new `CREATEOS_PROJECT_*` credentials.
 
 Next test, still pending: list sandboxes, inspect available CLI actions and create a short-lived isolated sandbox using Stripe-project-provisioned account credentials if allowed by free plan, record actual sandbox ID/exit code and destroy it. Keep pre-existing verified Lovable fixture runtime undisturbed.
+
+## STRIPE PROJECTS-PROVISIONED CREATEOS SANDBOX — LIVE EXECUTION PROVEN (17 Oct 2026)
+
+Following Stripe Projects provider/service provisioning and `createos whoami`, the owner used the installed CreateOS CLI **from the same Codespaces directory** with the provisioned CreateOS account:
+
+1. `createos sandbox create --shape s-1vcpu-1gb --rootfs devbox:1 --name fp-stripe-smoke --egress 127.0.0.1:9 --auto-pause 10m` returned **SUCCESS Sandbox is ready**, sandbox ID `sb-01m55xmmmemdh0yt5y0v9j65ta`, image `devbox:1`, shape `s-1vcpu-1gb`. (The previous attempt omitting `--rootfs` failed validation: `rootfs is required`; the corrected command succeeded.)
+2. `createos sandbox exec fp-stripe-smoke -- uname -a` returned real Linux stdout: `Linux fp-stripe-smoke 6.12.95 ... x86_64 GNU/Linux`.
+3. `createos sandbox rm fp-stripe-smoke --force` returned **SUCCESS Deleted fp-stripe-smoke** with matching sandbox ID.
+4. `createos sandbox list` returned **You don't have any active sandboxes.**
+
+**Confirmed:** Stripe Projects `createos/project` Free tier provisioned and linked; CreateOS CLI account identity `free-plan`; a sandbox could actually be created, executed and removed in this environment with the identity associated with that provisioned service. No public ingress or sensitive environment variables were supplied to the sandbox.
+
+**Not yet confirmed:** published Lovable Fulfillment Proof continues to use the **older** `CREATEOS_SANDBOX_API_KEY`, rather than the `CREATEOS_PROJECT_API_KEY` supplied by Stripe Projects. The CreateOS Projects credentials must not be blindly substituted into the Sandbox SDK; no production app end-to-end transaction has yet been reproduced specifically using the Stripe Projects-provisioned credential. The independent smoke test and the earlier 9/9 verified `TEST_FIXTURE` are separate, valid evidence records.
+
+Operational next priorities: verify safe credential binding only if time permits, record a camera-visible 2–3 min demonstration, publish required social post, submit public GitHub/app and Stripe Projects share URL `https://projects.dev/s#v1:createos~project` to the event form and leaderboard before the deadline. Do not represent a smoke-test-only CLI as full production app binding.
