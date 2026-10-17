@@ -629,6 +629,10 @@ export type Database = {
         Returns: Json
       }
       is_member: { Args: { _org: string }; Returns: boolean }
+      refuse_incident: {
+        Args: { _incident: string; _keep_destination?: string; _reason: string }
+        Returns: Json
+      }
       rotate_integration_secret: {
         Args: { _hint: string; _integration: string; _secret: string }
         Returns: undefined
