@@ -323,24 +323,28 @@ export const providerStatus = createServerFn({ method: "POST" })
     const { createosWhoami } = await import("@/lib/server/createos.server");
     const createos = await createosWhoami();
     const ai = { level: process.env["LOVABLE_API_KEY"] ? "CONFIGURED" : "NOT_CONFIGURED" };
-    // Stripe: only a successful authenticated API call counts as evidence.
+    // Stripe test API: only a successful authenticated read-only GET counts as evidence.
+    const { classifyStripeApi, classifyStripeProjects } = await import("@/lib/domain/stripe-evidence");
     const sk = process.env["STRIPE_SECRET_KEY"];
-    let stripe: { level: string; detail: Record<string, unknown> } = { level: "NOT_CONFIGURED", detail: {} };
+    let stripe: { level: string; detail: Record<string, unknown> } = { level: classifyStripeApi(sk, null), detail: {} };
     if (sk) {
       try {
         const r = await fetch("https://api.stripe.com/v1/account", { headers: { Authorization: `Bearer ${sk}` } });
         const j: any = await r.json();
         stripe = r.ok
-          ? { level: sk.startsWith("sk_live") || sk.startsWith("rk_live") ? "LIVE_OBSERVED" : "LIVE_TEST_MODE", detail: { account_id: j.id, country: j.country, request_id: r.headers.get("request-id"), provisioned_via_stripe_projects: process.env["STRIPE_PROJECTS_RESOURCE_ID"] ? "DECLARED_BY_ENV" : "UNKNOWN" } }
-          : { level: "REFUSED", detail: { status: r.status, error: j?.error?.message } };
+          ? { level: classifyStripeApi(sk, true), detail: { account_id: j.id, country: j.country, request_id: r.headers.get("request-id"), http_status: r.status } }
+          : { level: classifyStripeApi(sk, false), detail: { status: r.status, error: j?.error?.message } };
       } catch (e) {
-        stripe = { level: "UNKNOWN", detail: { error: (e as Error).message } };
+        stripe = { level: classifyStripeApi(sk, null), detail: { error: (e as Error).message } };
       }
     }
+    // Stripe Projects provisioning: not verifiable from inside the app; never proven by an env var.
+    const stripeProjects = classifyStripeProjects(process.env["STRIPE_PROJECTS_RESOURCE_ID"]);
     const db = await admin();
     await db.from("provider_checks").insert([
       { org_id: data.orgId, provider: "createos", evidence_level: createos.level, detail: createos.detail as never },
       { org_id: data.orgId, provider: "stripe", evidence_level: stripe.level, detail: stripe.detail as never },
+      { org_id: data.orgId, provider: "stripe_projects", evidence_level: stripeProjects.level, detail: stripeProjects.detail as never },
     ]);
-    return JSON.parse(JSON.stringify({ createos, ai, stripe })) as { createos: { level: string; detail: Record<string, string> }; ai: { level: string }; stripe: { level: string; detail: Record<string, string> } };
+    return JSON.parse(JSON.stringify({ createos, ai, stripe, stripeProjects })) as { createos: { level: string; detail: Record<string, string> }; ai: { level: string }; stripe: { level: string; detail: Record<string, string> }; stripeProjects: { level: string; detail: Record<string, string> } };
   });

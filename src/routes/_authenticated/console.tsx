@@ -95,6 +95,7 @@ function Console() {
       )}
       <main className="mx-auto grid max-w-[1500px] gap-5 px-5 py-5 lg:grid-cols-[420px_1fr]">
         <div className="space-y-5">
+          <NextStep d={d} />
           <Providers orgId={d.org} checks={d.checks} act={act} busy={busy} />
           <Integrations d={d} act={act} busy={busy} />
           <Fixture d={d} act={act} busy={busy} />
@@ -140,6 +141,41 @@ function Console() {
 
 type ActFn = <T>(label: string, fn: () => Promise<T>, ok?: (r: T) => string) => Promise<void>;
 
+/** Workflow guide: every "done" is derived from stored rows, never constants. */
+function NextStep({ d }: { d: Any }) {
+  const fixtures = d.events.filter((e: Any) => e.evidence_level === "TEST_FIXTURE").length;
+  const sandboxRuns = d.runs.filter((r: Any) => r.execution_status === "SUCCEEDED").length;
+  const approved = d.approvals.filter((a: Any) => a.status === "APPROVED").length;
+  const ready = d.incidents.filter((i: Any) => i.status === "READY_TO_WRITE").length;
+  const verified = d.receipts.filter((r: Any) => r.result === "VERIFIED").length;
+  const steps: [string, number, string][] = [
+    ["Create integration", d.integrations.length, "Integrations panel → create, then Test connection."],
+    ["Add SKU to catalogue", d.skus.length, "Policy panel → add the SKU your fixture uses (e.g. TEE-BLK-M)."],
+    ["Insert test fixture", fixtures, "Author test fixture → submit. Opens an incident."],
+    ["Run AI repair in CreateOS", sandboxRuns, "Select the incident → Run repair. Code runs only in the CreateOS sandbox."],
+    ["Approve (if required)", approved + ready, "Review diff + reasons → Approve. Bound to code + proposal hash."],
+    ["Verify independent readback", verified, "Commit & verify → receipt from a separate verifier reading stored state."],
+  ];
+  const next = steps.findIndex((s) => s[1] === 0);
+  return (
+    <section className="panel" aria-labelledby="next">
+      <div className="panel-head"><h2 id="next" className="panel-title">Next step</h2><Evidence level="TEST_FIXTURE" /></div>
+      <ol className="divide-y divide-border text-sm">
+        {steps.map(([label, n, hint], i) => (
+          <li key={label} className={`px-4 py-2 ${i === next ? "bg-accent" : ""}`}>
+            <div className="flex items-center justify-between gap-2">
+              <span className={i === next ? "font-medium" : ""}>{i + 1}. {label}</span>
+              <span className="font-mono text-[11px] text-muted-foreground">{n > 0 ? `${n} recorded` : "—"}</span>
+            </div>
+            {i === next && <p className="mt-1 text-xs text-muted-foreground">{hint}</p>}
+          </li>
+        ))}
+      </ol>
+      <p className="px-4 pb-3 pt-2 text-[11px] text-muted-foreground">Counts come from your stored rows. Fixture data is test data, never a production order.</p>
+    </section>
+  );
+}
+
 function CreateOrg({ onCreate, busy, flash }: { onCreate: (n: string) => void; busy: boolean; flash: { text: string } | null }) {
   const [name, setName] = useState("");
   return (
@@ -162,6 +198,7 @@ function Providers({ orgId, checks, act, busy }: { orgId: string; checks: Any[];
   const last = (p: string) => checks.find((c) => c.provider === p);
   const cos = res?.createos ?? (last("createos") && { level: last("createos").evidence_level, detail: last("createos").detail });
   const st = res?.stripe ?? (last("stripe") && { level: last("stripe").evidence_level, detail: last("stripe").detail });
+  const sp = res?.stripeProjects ?? (last("stripe_projects") && { level: last("stripe_projects").evidence_level, detail: last("stripe_projects").detail });
   return (
     <section className="panel" aria-labelledby="prov">
       <div className="panel-head"><h2 id="prov" className="panel-title">Provider status</h2>
@@ -185,10 +222,28 @@ function Providers({ orgId, checks, act, busy }: { orgId: string; checks: Any[];
           <p className="mt-1 text-xs text-muted-foreground">Lovable AI gateway. A run shows GENERATION_UNAVAILABLE if a call fails.</p>
         </li>
         <li className="px-4 py-3">
-          <div className="flex items-center justify-between"><span className="font-medium">Stripe (via Stripe Projects)</span><Evidence level={st?.level ?? "UNKNOWN"} /></div>
+          <div className="flex items-center justify-between"><span className="font-medium">Stripe test API</span><Evidence level={st?.level ?? "UNKNOWN"} /></div>
           <p className="mt-1 break-all text-xs text-muted-foreground">
-            {st?.detail?.account_id ? `Account ${st.detail.account_id} · request ${st.detail.request_id} · Stripe Projects provenance: ${st.detail.provisioned_via_stripe_projects}` : st?.detail?.error ?? "Provision with `stripe projects` CLI, then add STRIPE_SECRET_KEY (and STRIPE_PROJECTS_RESOURCE_ID) as secrets. Evidence requires a successful /v1/account call."}
+            {st ? (st.detail?.account_id ? `GET /v1/account succeeded · account ${st.detail.account_id} · request ${st.detail.request_id ?? "—"}` : st.detail?.error ?? (st.level === "NOT_CONFIGURED" ? "STRIPE_SECRET_KEY not set." : "")) : "Not checked yet."}
           </p>
+          <p className="mt-1 text-[11px] text-muted-foreground">Read-only reachability check. Proves the API key works, not how it was provisioned.</p>
+        </li>
+        <li className="px-4 py-3">
+          <div className="flex items-center justify-between"><span className="font-medium">Stripe Projects provisioning</span><Evidence level={sp?.level ?? "UNKNOWN"} /></div>
+          <p className="mt-1 text-xs text-muted-foreground">
+            {sp ? (sp.detail?.resource_id_declared ? "A resource id is declared in secrets. This is a self-declaration and is NOT verified by this app." : "No Stripe Projects declaration.") : "Not checked yet."}
+          </p>
+          <details className="mt-2 text-xs text-muted-foreground">
+            <summary className="cursor-pointer text-foreground">Set up with Stripe Projects</summary>
+            <ol className="mt-2 list-decimal space-y-1 pl-5">
+              <li><code className="code">stripe projects init</code></li>
+              <li><code className="code">stripe projects add createos/project</code></li>
+              <li><code className="code">stripe projects status</code> — keep its output as your provisioning evidence.</li>
+              <li><code className="code">stripe projects env --pull</code> writes a local .env. Never commit .env.</li>
+              <li>Copy the test key into Project Settings → Secrets as <code className="code">STRIPE_SECRET_KEY</code>. Never paste keys into chat or code.</li>
+              <li>Run live check. Expect LIVE_TEST_MODE for an sk_test key. Provisioning stays unverified in-app.</li>
+            </ol>
+          </details>
         </li>
       </ul>
     </section>
